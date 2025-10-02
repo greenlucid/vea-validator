@@ -1,4 +1,3 @@
-use anyhow::Result;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::primitives::Address;
 use alloy::rpc::types::Filter;
@@ -11,7 +10,7 @@ sol! {
 }
 
 #[tokio::test]
-async fn test_listen_snapshot_saved_event() -> Result<()> {
+async fn test_listen_snapshot_saved_event() {
     dotenv::dotenv().ok();
     
     let arbitrum_rpc = std::env::var("ARBITRUM_RPC_URL")
@@ -20,17 +19,17 @@ async fn test_listen_snapshot_saved_event() -> Result<()> {
     let vea_inbox_address = std::env::var("VEA_INBOX_ARB_TO_ETH")
         .expect("VEA_INBOX_ARB_TO_ETH must be set");
     
-    let provider = ProviderBuilder::new().connect(&arbitrum_rpc).await?;
+    let provider = ProviderBuilder::new()
+        .connect_http(arbitrum_rpc.parse().unwrap());
     
-    let inbox_address = Address::from_str(&vea_inbox_address)?;
+    let inbox_address = Address::from_str(&vea_inbox_address).unwrap();
     
     let filter = Filter::new()
         .address(inbox_address)
         .event_signature(SnapshotSaved::SIGNATURE_HASH);
     
-    let logs = provider.get_logs(&filter).await?;
+    let _logs = provider.get_logs(&filter).await.unwrap();
     
-    assert!(logs.is_empty() || !logs.is_empty(), "Successfully connected and queried logs");
-    
-    Ok(())
+    // Test passes if we can query (doesn't matter if logs exist)
+    assert!(true, "Query succeeded");
 }
