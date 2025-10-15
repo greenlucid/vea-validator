@@ -1,7 +1,7 @@
 use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::Provider;
 use crate::event_listener::ClaimEvent;
-use crate::contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth};
+use crate::contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
@@ -25,6 +25,8 @@ pub struct ClaimHandler<P: Provider> {
     outbox_address: Address,
     inbox_address: Address,
     wallet_address: Address,
+    /// WETH token address for Gnosis route (None for ETH-based routes)
+    weth_address: Option<Address>,
     /// Local storage of claims received from events - reactive pattern
     claims: Arc<RwLock<HashMap<u64, ClaimEvent>>>,
 }
@@ -36,6 +38,7 @@ impl<P: Provider> ClaimHandler<P> {
         outbox_address: Address,
         inbox_address: Address,
         wallet_address: Address,
+        weth_address: Option<Address>,
     ) -> Self {
         Self {
             provider,
@@ -43,6 +46,7 @@ impl<P: Provider> ClaimHandler<P> {
             outbox_address,
             inbox_address,
             wallet_address,
+            weth_address,
             claims: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -226,21 +230,73 @@ impl<P: Provider> ClaimHandler<P> {
 
     // Challenge an incorrect claim
     pub async fn challenge_claim(&self, epoch: u64, claim: IVeaOutboxArbToEth::Claim) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
-        
-        let deposit = outbox.deposit().call().await?;
-        
-        let tx = outbox.challenge(U256::from(epoch), claim, self.wallet_address)
-            .from(self.wallet_address)
-            .value(deposit);
-            
-        let pending = tx.send().await?;
-        let receipt = pending.get_receipt().await?;
-        
-        if !receipt.status() {
-            return Err("challenge transaction failed".into());
+        // Check if this is a WETH-based route (Gnosis)
+        if let Some(weth_addr) = self.weth_address {
+            // Use Gnosis outbox interface (no withdrawal address parameter)
+            let outbox_gnosis = IVeaOutboxArbToGnosis::new(self.outbox_address, self.provider.clone());
+            let deposit = outbox_gnosis.deposit().call().await?;
+
+            // WETH route: approve WETH to outbox, then call challenge without value
+            let weth = IWETH::new(weth_addr, self.provider.clone());
+
+            // Check current allowance
+            let current_allowance = weth.allowance(self.wallet_address, self.outbox_address).call().await?;
+
+            if current_allowance < deposit {
+                // Approve WETH to outbox
+                let approve_tx = weth.approve(self.outbox_address, deposit)
+                    .from(self.wallet_address);
+                let approve_pending = approve_tx.send().await?;
+                let approve_receipt = approve_pending.get_receipt().await?;
+
+                if !approve_receipt.status() {
+                    return Err("WETH approval failed".into());
+                }
+            }
+
+            // Convert claim to Gnosis format
+            let gnosis_claim = IVeaOutboxArbToGnosis::Claim {
+                stateRoot: claim.stateRoot,
+                claimer: claim.claimer,
+                timestampClaimed: claim.timestampClaimed,
+                timestampVerification: claim.timestampVerification,
+                blocknumberVerification: claim.blocknumberVerification,
+                honest: match claim.honest {
+                    IVeaOutboxArbToEth::Party::None => IVeaOutboxArbToGnosis::Party::None,
+                    IVeaOutboxArbToEth::Party::Claimer => IVeaOutboxArbToGnosis::Party::Claimer,
+                    IVeaOutboxArbToEth::Party::Challenger => IVeaOutboxArbToGnosis::Party::Challenger,
+                    _ => return Err("Invalid party type".into()),
+                },
+                challenger: claim.challenger,
+            };
+
+            // Call challenge without value or withdrawal address (WETH transfer happens inside contract)
+            let tx = outbox_gnosis.challenge(U256::from(epoch), gnosis_claim)
+                .from(self.wallet_address);
+
+            let pending = tx.send().await?;
+            let receipt = pending.get_receipt().await?;
+
+            if !receipt.status() {
+                return Err("challenge transaction failed".into());
+            }
+        } else {
+            // ETH route: use standard outbox interface with withdrawal address
+            let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
+            let deposit = outbox.deposit().call().await?;
+
+            let tx = outbox.challenge(U256::from(epoch), claim, self.wallet_address)
+                .from(self.wallet_address)
+                .value(deposit);
+
+            let pending = tx.send().await?;
+            let receipt = pending.get_receipt().await?;
+
+            if !receipt.status() {
+                return Err("challenge transaction failed".into());
+            }
         }
-        
+
         Ok(())
     }
 
@@ -351,6 +407,7 @@ mod tests {
             outbox_address,
             inbox_address,
             Address::from([0x01; 20]), // dummy wallet for tests
+            None, // No WETH for ARB_TO_ETH route
         );
         
         // Test that handler can be created and basic functions work

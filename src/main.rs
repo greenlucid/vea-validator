@@ -49,6 +49,7 @@ async fn run_validator_for_route<F, Fut>(
     arbitrum_rpc: String,
     wallet: EthereumWallet,
     wallet_address: Address,
+    weth_address: Option<Address>,
     bridge_resolver: F,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
@@ -79,6 +80,7 @@ where
         outbox_address,
         inbox_address,
         wallet_address,
+        weth_address,
     ));
 
     let event_listener_inbox = EventListener::new(
@@ -239,6 +241,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let gnosis_rpc = std::env::var("GNOSIS_RPC_URL")
         .expect("GNOSIS_RPC_URL must be set");
+    let weth_gnosis = Address::from_str(
+        &std::env::var("WETH_GNOSIS")
+            .expect("WETH_GNOSIS must be set")
+    )?;
 
     // Bridge resolver for ARB_TO_ETH: Direct bridge via Arbitrum canonical bridge
     let arb_rpc_for_eth = arbitrum_rpc.clone();
@@ -347,6 +353,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arbitrum_rpc.clone(),
         wallet.clone(),
         wallet_address,
+        None, // No WETH for ARB_TO_ETH route
         arb_to_eth_resolver,
     ));
 
@@ -358,6 +365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arbitrum_rpc,
         wallet.clone(),
         wallet_address,
+        Some(weth_gnosis), // WETH for ARB_TO_GNOSIS route
         arb_to_gnosis_resolver,
     ));
 

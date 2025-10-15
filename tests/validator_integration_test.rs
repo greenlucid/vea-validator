@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{timeout, Duration};
 use vea_validator::{
-    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth},
+    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToGnosis, IWETH},
     event_listener::{EventListener, ClaimEvent},
     claim_handler::ClaimHandler,
 };
@@ -177,6 +177,7 @@ async fn test_validator_detects_and_challenges_wrong_claim() {
         outbox_address,
         inbox_address,
         wallet_address,
+        None, // No WETH for ARB_TO_ETH route
     ));
 
     // Create event listener for claims
@@ -415,6 +416,7 @@ async fn test_validator_triggers_bridge_resolution() {
         outbox_address,
         inbox_address,
         wallet_address,
+        None, // No WETH for ARB_TO_ETH route
     ));
 
     let event_listener = EventListener::new(
@@ -492,6 +494,202 @@ async fn test_validator_triggers_bridge_resolution() {
     println!("  3. Automatically triggered bridge resolution via sendSnapshot");
     println!("\nThis proves the validator's complete workflow!");
     println!("Note: Full bridge message delivery (7-day delay) is not tested here");
+
+    fixture.revert_snapshots().await.unwrap();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_validator_detects_and_challenges_wrong_claim_arb_to_gnosis() {
+    dotenv::dotenv().ok();
+
+    println!("\n====================================================");
+    println!("VALIDATOR INTEGRATION TEST: ARB → GNOSIS Route");
+    println!("====================================================\n");
+
+    // Setup
+    let inbox_address = Address::from_str(
+        &std::env::var("VEA_INBOX_ARB_TO_GNOSIS").expect("VEA_INBOX_ARB_TO_GNOSIS must be set")
+    ).expect("Invalid inbox address");
+
+    let outbox_address = Address::from_str(
+        &std::env::var("VEA_OUTBOX_ARB_TO_GNOSIS").expect("VEA_OUTBOX_ARB_TO_GNOSIS must be set")
+    ).expect("Invalid outbox address");
+
+    let arbitrum_rpc = std::env::var("ARBITRUM_RPC_URL").expect("ARBITRUM_RPC_URL must be set");
+    let gnosis_rpc = std::env::var("GNOSIS_RPC_URL").expect("GNOSIS_RPC_URL must be set");
+
+    let private_key = std::env::var("PRIVATE_KEY")
+        .unwrap_or_else(|_| "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string());
+
+    let gnosis_provider = ProviderBuilder::new().connect_http(gnosis_rpc.parse().unwrap());
+    let gnosis_provider = Arc::new(gnosis_provider);
+
+    let arbitrum_provider = ProviderBuilder::new().connect_http(arbitrum_rpc.parse().unwrap());
+    let arbitrum_provider = Arc::new(arbitrum_provider);
+
+    let mut fixture = TestFixture::new(gnosis_provider.clone(), arbitrum_provider.clone());
+    fixture.take_snapshots().await.unwrap();
+
+    let signer = PrivateKeySigner::from_str(&private_key).unwrap();
+    let wallet_address = signer.address();
+    let wallet = EthereumWallet::from(signer);
+
+    let gnosis_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
+        .wallet(wallet.clone())
+        .connect_provider(gnosis_provider.clone());
+    let gnosis_with_wallet = Arc::new(gnosis_with_wallet);
+
+    let arbitrum_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
+        .wallet(wallet)
+        .connect_provider(arbitrum_provider.clone());
+    let arbitrum_with_wallet = Arc::new(arbitrum_with_wallet);
+
+    // STEP 1: Setup - create an epoch with messages and snapshot
+    println!("--- SETUP: Creating epoch with messages and snapshot ---");
+    let inbox = IVeaInboxArbToGnosis::new(inbox_address, arbitrum_with_wallet.clone());
+    let outbox = IVeaOutboxArbToGnosis::new(outbox_address, gnosis_with_wallet.clone());
+
+    let epoch_period: u64 = inbox.epochPeriod().call().await.unwrap().try_into().unwrap();
+
+    // Send messages
+    for i in 0..3 {
+        let test_message = alloy::primitives::Bytes::from(vec![0xAA, 0xBB, 0xCC, i]);
+        inbox.sendMessage(
+            Address::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            test_message
+        ).send().await.unwrap().get_receipt().await.unwrap();
+    }
+
+    let current_epoch: u64 = inbox.epochNow().call().await.unwrap().try_into().unwrap();
+    inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
+    let correct_root = inbox.snapshots(U256::from(current_epoch)).call().await.unwrap();
+
+    if correct_root == FixedBytes::<32>::ZERO {
+        panic!("Got zero root, test cannot proceed");
+    }
+
+    println!("✓ Saved snapshot for epoch {} with correct root: {:?}", current_epoch, correct_root);
+
+    // Advance time so epoch can be claimed
+    advance_time(arbitrum_provider.as_ref(), epoch_period + 10).await;
+    advance_time(gnosis_provider.as_ref(), epoch_period + 10).await;
+
+    let target_epoch = current_epoch;
+
+    // Sync gnosis time to make the epoch claimable
+    let gnosis_block = gnosis_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
+    let gnosis_timestamp = gnosis_block.header.timestamp;
+    let target_timestamp = (target_epoch + 1) * epoch_period + 10;
+    let advance_amount = target_timestamp.saturating_sub(gnosis_timestamp);
+    if advance_amount > 0 {
+        println!("Syncing Gnosis time (advancing {} seconds)", advance_amount);
+        advance_time(gnosis_provider.as_ref(), advance_amount).await;
+    }
+
+    // STEP 2: Setup WETH approval for validator (Gnosis uses WETH for deposits)
+    println!("\n--- Setting up WETH for validator ---");
+    let weth_address = Address::from_str(&std::env::var("WETH_GNOSIS").expect("WETH_GNOSIS must be set"))
+        .expect("Invalid WETH address");
+    let weth = IWETH::new(weth_address, gnosis_with_wallet.clone());
+
+    let deposit = outbox.deposit().call().await.unwrap();
+    // Mint and approve enough WETH for validator to make claims AND challenges
+    weth.mintMock(wallet_address, deposit * U256::from(10)).send().await.unwrap().get_receipt().await.unwrap();
+    weth.approve(outbox_address, deposit * U256::from(10)).send().await.unwrap().get_receipt().await.unwrap();
+    println!("✓ WETH minted and approved for validator");
+
+    // STEP 3: Create the ClaimHandler (this is what the validator uses)
+    println!("\n--- Starting Validator Components ---");
+    let claim_handler = Arc::new(ClaimHandler::new(
+        gnosis_with_wallet.clone(),
+        arbitrum_with_wallet.clone(),
+        outbox_address,
+        inbox_address,
+        wallet_address,
+        Some(weth_address), // WETH for ARB_TO_GNOSIS route
+    ));
+
+    // Create event listener for claims on Gnosis
+    let event_listener = EventListener::new(
+        gnosis_provider.clone(),
+        outbox_address,
+    );
+
+    // Flag to track if validator challenged
+    let challenge_detected = Arc::new(AtomicBool::new(false));
+    let challenge_flag = challenge_detected.clone();
+
+    // Start watching for claims (like the validator does in main.rs)
+    let claim_handler_clone = claim_handler.clone();
+    let watch_handle = tokio::spawn(async move {
+        event_listener.watch_claims(move |event: ClaimEvent| {
+            let handler = claim_handler_clone.clone();
+            let flag = challenge_flag.clone();
+            Box::pin(async move {
+                println!("📡 Validator detected claim for epoch {} by {}", event.epoch, event.claimer);
+
+                // THIS IS WHAT THE REAL VALIDATOR DOES
+                if let Ok(action) = handler.handle_claim_event(event.clone()).await {
+                    match action {
+                        vea_validator::claim_handler::ClaimAction::Challenge { epoch, incorrect_claim } => {
+                            println!("⚔️  Validator decided to CHALLENGE epoch {}", epoch);
+
+                            // Use the REAL validator code path
+                            if let Err(e) = handler.challenge_claim(epoch, vea_validator::claim_handler::make_claim(&incorrect_claim)).await {
+                                eprintln!("❌ Challenge failed: {}", e);
+                            } else {
+                                println!("✅ Validator successfully challenged the claim!");
+                                flag.store(true, Ordering::SeqCst);
+                            }
+                        }
+                        vea_validator::claim_handler::ClaimAction::None => {
+                            println!("ℹ️  Validator decided NO ACTION needed");
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(())
+            })
+        }).await
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // STEP 4: Malicious actor makes wrong claim on Gnosis
+    println!("\n--- ATTACK: Malicious actor submits wrong claim on Gnosis ---");
+
+    let wrong_root = FixedBytes::<32>::from([0x99; 32]);
+    println!("Wrong root: {:?}", wrong_root);
+    println!("Correct root: {:?}", correct_root);
+
+    outbox.claim(U256::from(target_epoch), wrong_root)
+        .send().await.unwrap()
+        .get_receipt().await.unwrap();
+
+    println!("✓ Malicious claim submitted on Gnosis");
+
+    // STEP 5: Wait for validator to react
+    println!("\n--- Waiting for validator to detect and challenge... ---");
+
+    let result = timeout(Duration::from_secs(5), async {
+        while !challenge_detected.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await;
+
+    watch_handle.abort();
+
+    if result.is_ok() {
+        println!("\n✅✅✅ ARB → GNOSIS VALIDATOR TEST PASSED! ✅✅✅");
+        println!("The validator:");
+        println!("  1. Detected the malicious claim on Gnosis via event watching");
+        println!("  2. Verified it was incorrect against Arbitrum snapshot");
+        println!("  3. Automatically challenged it on Gnosis");
+        println!("\nThis proves the validator works for the ARB → GNOSIS route!");
+    } else {
+        panic!("❌ VALIDATOR FAILED: Did not challenge the wrong claim on Gnosis within 5 seconds");
+    }
 
     fixture.revert_snapshots().await.unwrap();
 }

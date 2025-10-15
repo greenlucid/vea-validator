@@ -125,6 +125,7 @@ async fn test_full_validator_flow() {
         outbox_address,
         inbox_address,
         wallet_address,
+        None, // No WETH for ARB_TO_ETH route
     );
     
     // Test 1: Check contract connectivity
