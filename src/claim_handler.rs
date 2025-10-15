@@ -352,6 +352,31 @@ impl<P: Provider> ClaimHandler<P> {
             })
         }
     }
+
+    /// Sync and verify claims on startup - returns list of actions to take
+    /// This is called when the validator starts to catch up on any claims made during downtime
+    pub async fn startup_sync_and_verify(&self, from_epoch: u64, to_epoch: u64) -> Result<Vec<ClaimAction>, Box<dyn std::error::Error + Send + Sync>> {
+        // First sync all claims from blockchain
+        self.sync_existing_claims(from_epoch, to_epoch).await?;
+
+        let mut actions = Vec::new();
+
+        // Verify each synced claim and collect actions
+        for epoch in from_epoch..=to_epoch {
+            if let Some(claim) = self.get_claim_for_epoch(epoch).await? {
+                let is_valid = self.verify_claim(&claim).await?;
+
+                if !is_valid {
+                    actions.push(ClaimAction::Challenge {
+                        epoch,
+                        incorrect_claim: claim,
+                    });
+                }
+            }
+        }
+
+        Ok(actions)
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -125,28 +125,21 @@ where
 
     // Sync existing claims on startup - look back 10 epochs to be safe
     let sync_from = current_epoch.saturating_sub(10);
-    claim_handler.sync_existing_claims(sync_from, current_epoch).await
-        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to sync existing claims: {}", route_name, e));
+    println!("[{}] Syncing and verifying claims from epoch {} to {}...", route_name, sync_from, current_epoch);
 
-    // After syncing, verify all claims and challenge any incorrect ones
-    println!("[{}] Verifying synced claims...", route_name);
-    for epoch in sync_from..=current_epoch {
-        if let Some(claim) = claim_handler.get_claim_for_epoch(epoch).await
-            .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to query claim for epoch {}: {}", route_name, epoch, e))
-        {
-            let is_valid = claim_handler.verify_claim(&claim).await
-                .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to verify claim for epoch {}: {}", route_name, epoch, e));
+    let startup_actions = claim_handler.startup_sync_and_verify(sync_from, current_epoch).await
+        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to sync and verify claims: {}", route_name, e));
 
-            if !is_valid {
+    // Handle all actions from startup sync
+    for action in startup_actions {
+        match &action {
+            ClaimAction::Challenge { epoch, .. } => {
                 println!("[{}] Found incorrect claim for epoch {} from startup sync - challenging", route_name, epoch);
-                let action = ClaimAction::Challenge {
-                    epoch,
-                    incorrect_claim: claim,
-                };
-                let bridge_resolver_startup = bridge_resolver.clone();
-                handle_claim_action(&claim_handler, action, route_name, &bridge_resolver_startup).await;
             }
+            _ => {}
         }
+        let bridge_resolver_startup = bridge_resolver.clone();
+        handle_claim_action(&claim_handler, action, route_name, &bridge_resolver_startup).await;
     }
 
     let claim_handler_for_epoch = claim_handler.clone();

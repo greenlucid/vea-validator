@@ -693,3 +693,183 @@ async fn test_validator_detects_and_challenges_wrong_claim_arb_to_gnosis() {
 
     fixture.revert_snapshots().await.unwrap();
 }
+
+#[tokio::test]
+#[serial]
+async fn test_validator_startup_sync_detects_incorrect_claim() {
+    dotenv::dotenv().ok();
+
+    println!("\n==========================================================");
+    println!("VALIDATOR INTEGRATION TEST: Startup Sync Challenge");
+    println!("==========================================================\n");
+
+    // This test verifies that when the validator restarts, it:
+    // 1. Syncs existing claims from the last 10 epochs
+    // 2. Verifies each synced claim
+    // 3. Challenges any incorrect claims it finds
+
+    // Setup
+    let inbox_address = Address::from_str(
+        &std::env::var("VEA_INBOX_ARB_TO_ETH").expect("VEA_INBOX_ARB_TO_ETH must be set")
+    ).expect("Invalid inbox address");
+
+    let outbox_address = Address::from_str(
+        &std::env::var("VEA_OUTBOX_ARB_TO_ETH").expect("VEA_OUTBOX_ARB_TO_ETH must be set")
+    ).expect("Invalid outbox address");
+
+    let arbitrum_rpc = std::env::var("ARBITRUM_RPC_URL").expect("ARBITRUM_RPC_URL must be set");
+    let ethereum_rpc = std::env::var("ETHEREUM_RPC_URL")
+        .or_else(|_| std::env::var("MAINNET_RPC_URL"))
+        .expect("ETHEREUM_RPC_URL or MAINNET_RPC_URL must be set");
+
+    let private_key = std::env::var("PRIVATE_KEY")
+        .unwrap_or_else(|_| "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string());
+
+    let ethereum_provider = ProviderBuilder::new().connect_http(ethereum_rpc.parse().unwrap());
+    let ethereum_provider = Arc::new(ethereum_provider);
+
+    let arbitrum_provider = ProviderBuilder::new().connect_http(arbitrum_rpc.parse().unwrap());
+    let arbitrum_provider = Arc::new(arbitrum_provider);
+
+    let mut fixture = TestFixture::new(ethereum_provider.clone(), arbitrum_provider.clone());
+    fixture.take_snapshots().await.unwrap();
+
+    let signer = PrivateKeySigner::from_str(&private_key).unwrap();
+    let wallet_address = signer.address();
+    let wallet = EthereumWallet::from(signer);
+
+    let ethereum_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
+        .wallet(wallet.clone())
+        .connect_provider(ethereum_provider.clone());
+    let ethereum_with_wallet = Arc::new(ethereum_with_wallet);
+
+    let arbitrum_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
+        .wallet(wallet.clone())
+        .connect_provider(arbitrum_provider.clone());
+    let arbitrum_with_wallet = Arc::new(arbitrum_with_wallet);
+
+    // STEP 1: Create epoch with snapshot
+    println!("--- SETUP: Creating epoch with messages and snapshot ---");
+    let inbox = IVeaInboxArbToEth::new(inbox_address, arbitrum_with_wallet.clone());
+    let outbox = IVeaOutboxArbToEth::new(outbox_address, ethereum_with_wallet.clone());
+
+    let epoch_period: u64 = inbox.epochPeriod().call().await.unwrap().try_into().unwrap();
+
+    // Send messages
+    for i in 0..3 {
+        let test_message = alloy::primitives::Bytes::from(vec![0x11, 0x22, 0x33, i]);
+        inbox.sendMessage(
+            Address::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            test_message
+        ).send().await.unwrap().get_receipt().await.unwrap();
+    }
+
+    let current_epoch: u64 = inbox.epochNow().call().await.unwrap().try_into().unwrap();
+    inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
+    let correct_root = inbox.snapshots(U256::from(current_epoch)).call().await.unwrap();
+
+    if correct_root == FixedBytes::<32>::ZERO {
+        panic!("Got zero root, test cannot proceed");
+    }
+
+    println!("✓ Saved snapshot for epoch {} with correct root: {:?}", current_epoch, correct_root);
+
+    // Advance time so epoch can be claimed
+    advance_time(arbitrum_provider.as_ref(), epoch_period + 10).await;
+    advance_time(ethereum_provider.as_ref(), epoch_period + 10).await;
+
+    let target_epoch = current_epoch;
+
+    // Sync ethereum time
+    let eth_block = ethereum_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
+    let eth_timestamp = eth_block.header.timestamp;
+    let target_timestamp = (target_epoch + 1) * epoch_period + 10;
+    let advance_amount = target_timestamp.saturating_sub(eth_timestamp);
+    if advance_amount > 0 {
+        println!("Syncing Ethereum time (advancing {} seconds)", advance_amount);
+        advance_time(ethereum_provider.as_ref(), advance_amount).await;
+    }
+
+    // STEP 2: Malicious claim is made BEFORE validator starts (simulating downtime)
+    println!("\n--- ATTACK: Malicious claim made while validator is DOWN ---");
+    let wrong_root = FixedBytes::<32>::from([0x77; 32]);
+    println!("Wrong root: {:?}", wrong_root);
+    println!("Correct root: {:?}", correct_root);
+
+    let deposit = outbox.deposit().call().await.unwrap();
+    let receipt = outbox.claim(U256::from(target_epoch), wrong_root)
+        .value(deposit)
+        .send().await.unwrap()
+        .get_receipt().await.unwrap();
+
+    println!("✓ Malicious claim submitted at block {}", receipt.block_number.unwrap());
+    println!("  (Validator was offline and missed the Claimed event)");
+
+    // STEP 3: Now validator starts up and syncs (using REAL validator code)
+    println!("\n--- VALIDATOR STARTUP: Syncing existing claims ---");
+    let claim_handler = Arc::new(ClaimHandler::new(
+        ethereum_with_wallet.clone(),
+        arbitrum_with_wallet.clone(),
+        outbox_address,
+        inbox_address,
+        wallet_address,
+        None, // No WETH for ARB_TO_ETH route
+    ));
+
+    let current_epoch_on_startup: u64 = inbox.epochFinalized().call().await.unwrap().try_into().unwrap();
+    let sync_from = current_epoch_on_startup.saturating_sub(10);
+
+    println!("Current epoch: {}", current_epoch_on_startup);
+    println!("Syncing claims from epoch {} to {}", sync_from, current_epoch_on_startup);
+
+    // STEP 4: Call the REAL startup_sync_and_verify function from claim_handler
+    // This is the exact same function that main.rs calls on startup
+    println!("\n--- STARTUP VERIFICATION: Using REAL validator startup logic ---");
+
+    let startup_actions = claim_handler.startup_sync_and_verify(sync_from, current_epoch_on_startup).await
+        .expect("Failed to sync and verify claims");
+
+    println!("✓ Startup sync complete, found {} actions to take", startup_actions.len());
+
+    // STEP 5: Handle the actions (challenge incorrect claims)
+    let mut challenge_triggered = false;
+    for action in startup_actions {
+        match action {
+            vea_validator::claim_handler::ClaimAction::Challenge { epoch, incorrect_claim } => {
+                println!("⚠️  Startup sync found incorrect claim for epoch {} - challenging", epoch);
+
+                match claim_handler.challenge_claim(epoch, vea_validator::claim_handler::make_claim(&incorrect_claim)).await {
+                    Ok(()) => {
+                        println!("✅ Successfully challenged incorrect claim from startup sync!");
+                        challenge_triggered = true;
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        if err_msg.contains("Claim already challenged") {
+                            println!("ℹ️  Claim already challenged by another validator");
+                            challenge_triggered = true;
+                        } else {
+                            panic!("❌ Challenge failed: {}", e);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // STEP 6: Verify the challenge happened
+    if challenge_triggered {
+        println!("\n✅✅✅ STARTUP SYNC TEST PASSED! ✅✅✅");
+        println!("The validator:");
+        println!("  1. Started up after being offline");
+        println!("  2. Called startup_sync_and_verify() (REAL validator function)");
+        println!("  3. Detected the incorrect claim that was made during downtime");
+        println!("  4. Automatically challenged it on startup");
+        println!("\nThis proves the validator catches up on attacks it missed during downtime!");
+    } else {
+        panic!("❌ TEST FAILED: Validator did not challenge the incorrect claim during startup sync");
+    }
+
+    fixture.revert_snapshots().await.unwrap();
+}
