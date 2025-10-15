@@ -24,17 +24,35 @@ async fn handle_claim_action<P: alloy::providers::Provider, F, Fut>(
         ClaimAction::None => {},
         ClaimAction::Claim { epoch, state_root } => {
             println!("[{}] Submitting claim for epoch {}", route, epoch);
-            let _ = handler.submit_claim(epoch, state_root).await;
+            // Submit claim failure is OK - someone else may have claimed first
+            // The Claimed event listener will verify whoever's claim
+            if let Err(e) = handler.submit_claim(epoch, state_root).await {
+                println!("[{}] Submit claim failed (likely someone else claimed first): {}", route, e);
+            }
         }
         ClaimAction::Challenge { epoch, incorrect_claim } => {
-            println!("[{}] Challenging claim for epoch {}", route, epoch);
-            if let Err(e) = handler.challenge_claim(epoch, make_claim(&incorrect_claim)).await {
-                eprintln!("[{}] Failed to challenge claim: {}", route, e);
-            } else {
-                // After successfully challenging, trigger bridge resolution
-                println!("[{}] Challenge successful, triggering bridge resolution for epoch {}", route, epoch);
-                if let Err(e) = bridge_resolver(epoch, incorrect_claim.clone()).await {
-                    eprintln!("[{}] Failed to trigger bridge resolution: {}", route, e);
+            println!("[{}] Challenging incorrect claim for epoch {}", route, epoch);
+
+            // Challenge the claim - acceptable to fail if someone else already challenged
+            match handler.challenge_claim(epoch, make_claim(&incorrect_claim)).await {
+                Ok(()) => {
+                    println!("[{}] Challenge successful, triggering bridge resolution for epoch {}", route, epoch);
+
+                    // Bridge resolution MUST succeed - failure means honest snapshot can't be verified
+                    bridge_resolver(epoch, incorrect_claim.clone()).await
+                        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to trigger bridge resolution for epoch {}: {}", route, epoch, e));
+
+                    println!("[{}] Bridge resolution triggered successfully for epoch {}", route, epoch);
+                }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    // OK if another validator already challenged - bridge is defended
+                    if err_msg.contains("Claim already challenged") {
+                        println!("[{}] Claim already challenged by another validator - bridge is safe", route);
+                    } else {
+                        // Any other error is FATAL - means we can't defend the bridge
+                        panic!("[{}] FATAL: Failed to challenge incorrect claim for epoch {}: {}", route, epoch, e);
+                    }
                 }
             }
         }
@@ -107,8 +125,28 @@ where
 
     // Sync existing claims on startup - look back 10 epochs to be safe
     let sync_from = current_epoch.saturating_sub(10);
-    if let Err(e) = claim_handler.sync_existing_claims(sync_from, current_epoch).await {
-        eprintln!("[{}] Warning: Failed to sync existing claims: {}", route_name, e);
+    claim_handler.sync_existing_claims(sync_from, current_epoch).await
+        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to sync existing claims: {}", route_name, e));
+
+    // After syncing, verify all claims and challenge any incorrect ones
+    println!("[{}] Verifying synced claims...", route_name);
+    for epoch in sync_from..=current_epoch {
+        if let Some(claim) = claim_handler.get_claim_for_epoch(epoch).await
+            .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to query claim for epoch {}: {}", route_name, epoch, e))
+        {
+            let is_valid = claim_handler.verify_claim(&claim).await
+                .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to verify claim for epoch {}: {}", route_name, epoch, e));
+
+            if !is_valid {
+                println!("[{}] Found incorrect claim for epoch {} from startup sync - challenging", route_name, epoch);
+                let action = ClaimAction::Challenge {
+                    epoch,
+                    incorrect_claim: claim,
+                };
+                let bridge_resolver_startup = bridge_resolver.clone();
+                handle_claim_action(&claim_handler, action, route_name, &bridge_resolver_startup).await;
+            }
+        }
     }
 
     let claim_handler_for_epoch = claim_handler.clone();
@@ -120,9 +158,10 @@ where
             let route = route_epoch.clone();
             let resolver = bridge_resolver_epoch.clone();
             Box::pin(async move {
-                if let Ok(action) = handler.handle_epoch_end(epoch).await {
-                    handle_claim_action(&handler, action, &route, &resolver).await;
-                }
+                let action = handler.handle_epoch_end(epoch).await
+                    .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle epoch end for epoch {}: {}", route, epoch, e));
+
+                handle_claim_action(&handler, action, &route, &resolver).await;
                 Ok(())
             })
         }).await
@@ -130,41 +169,30 @@ where
 
     let claim_handler_for_snapshots = claim_handler.clone();
     let route_snapshot = route_name.to_string();
-    let bridge_resolver_snapshot = bridge_resolver.clone();
     let snapshot_handle = tokio::spawn(async move {
         event_listener_inbox.watch_snapshots(move |event: SnapshotEvent| {
             let handler = claim_handler_for_snapshots.clone();
             let route = route_snapshot.clone();
-            let resolver = bridge_resolver_snapshot.clone();
             Box::pin(async move {
                 println!("[{}] Snapshot saved for epoch {} with root {:?}", route, event.epoch, event.state_root);
 
+                // Check if a claim already exists
                 match handler.get_claim_for_epoch(event.epoch).await {
-                    Ok(Some(existing_claim)) => {
-                        println!("[{}] Claim already exists for epoch {}", route, event.epoch);
-                        match handler.verify_claim(&existing_claim).await {
-                            Ok(true) => println!("[{}] Existing claim is valid", route),
-                            Ok(false) => {
-                                println!("[{}] Existing claim is INVALID - need to challenge", route);
-                                if let Err(e) = handler.challenge_claim(event.epoch, make_claim(&existing_claim)).await {
-                                    eprintln!("[{}] Failed to challenge claim: {}", route, e);
-                                } else {
-                                    println!("[{}] Challenge successful, triggering bridge resolution for epoch {}", route, event.epoch);
-                                    if let Err(e) = resolver(event.epoch, existing_claim.clone()).await {
-                                        eprintln!("[{}] Failed to trigger bridge resolution: {}", route, e);
-                                    }
-                                }
-                            }
-                            Err(e) => eprintln!("[{}] Error verifying claim: {}", route, e),
-                        }
+                    Ok(Some(_existing_claim)) => {
+                        println!("[{}] Claim already exists for epoch {} - was already verified when Claimed event fired", route, event.epoch);
+                        // Do nothing - the claim was already verified and challenged (if needed) by the Claimed event listener
                     }
                     Ok(None) => {
-                        println!("[{}] No claim for epoch {} - submitting claim", route, event.epoch);
+                        println!("[{}] No claim exists for epoch {} - submitting honest claim", route, event.epoch);
+                        // Note: Failure here is acceptable if someone else claims first
+                        // The Claimed event listener will verify whoever's claim it is
                         if let Err(e) = handler.submit_claim(event.epoch, event.state_root).await {
-                            eprintln!("[{}] Failed to submit claim: {}", route, e);
+                            println!("[{}] Submit claim failed (likely someone else claimed first): {}", route, e);
                         }
                     }
-                    Err(e) => eprintln!("[{}] Error checking claim: {}", route, e),
+                    Err(e) => {
+                        panic!("[{}] FATAL: Failed to query claim for epoch {}: {}", route, event.epoch, e);
+                    }
                 }
                 Ok(())
             })
@@ -182,9 +210,10 @@ where
             Box::pin(async move {
                 println!("[{}] Claim detected for epoch {} by {}", route, event.epoch, event.claimer);
 
-                if let Ok(action) = handler.handle_claim_event(event.clone()).await {
-                    handle_claim_action(&handler, action, &route, &resolver).await;
-                }
+                let action = handler.handle_claim_event(event.clone()).await
+                    .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle claim event for epoch {}: {}", route, event.epoch, e));
+
+                handle_claim_action(&handler, action, &route, &resolver).await;
                 Ok(())
             })
         }).await
