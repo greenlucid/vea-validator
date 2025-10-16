@@ -7,7 +7,7 @@ sol! {
         event MessageSent(bytes _nodeData);
         event SnapshotSaved(bytes32 _snapshot, uint256 _epoch, uint64 _count);
         event SnapshotSent(uint256 indexed _epochSent, bytes32 _ticketId);
-        
+
         function sendMessage(address to, bytes calldata data) external returns (uint64);
         function saveSnapshot() external;
         function count() external view returns (uint64);
@@ -16,7 +16,7 @@ sol! {
         function epochNow() external view returns (uint256);
         function epochFinalized() external view returns (uint256);
         function sendSnapshot(uint256 _epoch, Claim memory _claim) external;
-        
+
         struct Claim {
             bytes32 stateRoot;
             address claimer;
@@ -58,7 +58,7 @@ sol! {
         event MessageRelayed(uint64 _msgId);
         event VerificationStarted(uint256 indexed _epoch);
         event Verified(uint256 indexed _epoch);
-        
+
         function claim(uint256 _epoch, bytes32 _stateRoot) external payable;
         function challenge(uint256 _epoch, Claim memory _claim, address _withdrawalAddress) external payable;
         function startVerification(uint256 _epoch, Claim memory _claim) external;
@@ -89,7 +89,7 @@ sol! {
         function epochNow() external view returns (uint256);
         function epochFinalized() external view returns (uint256);
         function sendSnapshot(uint256 _epoch, uint256 _gasLimit, Claim memory _claim) external;
-        
+
         struct Claim {
             bytes32 stateRoot;
             address claimer;
@@ -132,7 +132,7 @@ sol! {
         event VerificationStarted(uint256 indexed _epoch);
         event Verified(uint256 indexed _epoch);
         event SequencerDelayLimitUpdateReceived(uint256 _newSequencerDelayLimit);
-        
+
         function claim(uint256 _epoch, bytes32 _stateRoot) external payable;
         function challenge(uint256 _epoch, Claim memory _claim) external payable;
         function startVerification(uint256 _epoch, Claim memory _claim) external;
@@ -152,12 +152,12 @@ sol! {
         event SequencerDelayLimitSent(bytes32 _ticketID);
         event SequencerDelayLimitUpdated(uint256 _newSequencerDelayLimit);
         event SequencerDelayLimitDecreaseRequested(uint256 _requestedSequencerDelayLimit);
-        
+
         function route(uint256 _epoch, bytes32 _stateroot, Claim memory _claim) external;
         function updateSequencerDelayLimit() external;
         function sendSequencerDelayLimit() external;
         function executeSequencerDelayLimitDecreaseRequest() external;
-        
+
         struct Claim {
             bytes32 stateRoot;
             address claimer;
@@ -200,3 +200,8 @@ sol! {
         function burn(uint256 wad) external;
     }
 }
+
+// Type aliases to reduce verbosity throughout the codebase
+// All Claim structs are identical, so we standardize on IVeaOutboxArbToEth's version
+pub type Claim = IVeaOutboxArbToEth::Claim;
+pub type Party = IVeaOutboxArbToEth::Party;

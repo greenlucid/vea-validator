@@ -12,6 +12,32 @@ use vea_validator::{
     config::ValidatorConfig,
 };
 
+/// Convert ClaimEvent to IVeaInboxArbToEth::Claim
+fn claim_to_arb_eth(event: &ClaimEvent) -> IVeaInboxArbToEth::Claim {
+    IVeaInboxArbToEth::Claim {
+        stateRoot: event.state_root,
+        claimer: event.claimer,
+        timestampClaimed: event.timestamp_claimed,
+        timestampVerification: 0,
+        blocknumberVerification: 0,
+        honest: IVeaInboxArbToEth::Party::None,
+        challenger: Address::ZERO,
+    }
+}
+
+/// Convert ClaimEvent to IVeaInboxArbToGnosis::Claim
+fn claim_to_arb_gnosis(event: &ClaimEvent) -> IVeaInboxArbToGnosis::Claim {
+    IVeaInboxArbToGnosis::Claim {
+        stateRoot: event.state_root,
+        claimer: event.claimer,
+        timestampClaimed: event.timestamp_claimed,
+        timestampVerification: 0,
+        blocknumberVerification: 0,
+        honest: IVeaInboxArbToGnosis::Party::None,
+        challenger: Address::ZERO,
+    }
+}
+
 async fn handle_claim_action<P: alloy::providers::Provider, F, Fut>(
     handler: &Arc<ClaimHandler<P>>,
     action: ClaimAction,
@@ -217,101 +243,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Validator wallet address: {}", wallet_address);
 
     // Bridge resolver for ARB_TO_ETH: Direct bridge via Arbitrum canonical bridge
-    let arb_rpc_for_eth = c.arbitrum_rpc.clone();
-    let wallet_for_eth = wallet.clone();
-    let inbox_addr_eth = c.inbox_arb_to_eth;
-    let wallet_addr_eth = wallet_address;
-    let arb_to_eth_resolver = move |epoch: u64, claim: ClaimEvent| {
-        let rpc = arb_rpc_for_eth.clone();
-        let wlt = wallet_for_eth.clone();
-        let inbox = inbox_addr_eth;
-        let wlt_addr = wallet_addr_eth;
-        async move {
-            println!("[ARB_TO_ETH] Triggering bridge resolution for epoch {}", epoch);
+    let arb_to_eth_resolver = {
+        let rpc = c.arbitrum_rpc.clone();
+        let wlt = wallet.clone();
+        let inbox = c.inbox_arb_to_eth;
+        let wlt_addr = wallet_address;
+        move |epoch: u64, claim: ClaimEvent| {
+            let rpc = rpc.clone();
+            let wlt = wlt.clone();
+            async move {
+                println!("[ARB_TO_ETH] Triggering bridge resolution for epoch {}", epoch);
 
-            let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                .wallet(wlt)
-                .connect_http(rpc.parse()?);
-            let provider = Arc::new(provider);
+                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                    .wallet(wlt)
+                    .connect_http(rpc.parse()?);
+                let provider = Arc::new(provider);
 
-            let inbox_contract = IVeaInboxArbToEth::new(inbox, provider);
+                let inbox_contract = IVeaInboxArbToEth::new(inbox, provider);
+                let tx = inbox_contract.sendSnapshot(U256::from(epoch), claim_to_arb_eth(&claim))
+                    .from(wlt_addr);
 
-            // Convert ClaimEvent to the Claim struct expected by sendSnapshot
-            let outbox_claim = IVeaInboxArbToEth::Claim {
-                stateRoot: claim.state_root,
-                claimer: claim.claimer,
-                timestampClaimed: claim.timestamp_claimed,
-                timestampVerification: 0,
-                blocknumberVerification: 0,
-                honest: IVeaInboxArbToEth::Party::None,
-                challenger: Address::ZERO,
-            };
+                let pending = tx.send().await?;
+                let receipt = pending.get_receipt().await?;
 
-            let tx = inbox_contract.sendSnapshot(U256::from(epoch), outbox_claim)
-                .from(wlt_addr);
+                if !receipt.status() {
+                    return Err("sendSnapshot transaction failed".into());
+                }
 
-            let pending = tx.send().await?;
-            let receipt = pending.get_receipt().await?;
-
-            if !receipt.status() {
-                return Err("sendSnapshot transaction failed".into());
+                println!("[ARB_TO_ETH] Bridge resolution triggered successfully for epoch {}", epoch);
+                Ok(())
             }
-
-            println!("[ARB_TO_ETH] Bridge resolution triggered successfully for epoch {}", epoch);
-            Ok(())
         }
     };
 
     // Bridge resolver for ARB_TO_GNOSIS: Multi-hop via router
     // Note: The snapshot needs to be sent from Arbitrum, which goes to the router on mainnet,
     // which then forwards to Gnosis via AMB. This is a 2-hop process with ~7 day delay on first hop.
-    let arb_rpc_for_gnosis = c.arbitrum_rpc.clone();
-    let wallet_for_gnosis = wallet.clone();
-    let inbox_addr_gnosis = c.inbox_arb_to_gnosis;
-    let wallet_addr_gnosis = wallet_address;
-    let arb_to_gnosis_resolver = move |epoch: u64, claim: ClaimEvent| {
-        let rpc = arb_rpc_for_gnosis.clone();
-        let wlt = wallet_for_gnosis.clone();
-        let inbox = inbox_addr_gnosis;
-        let wlt_addr = wallet_addr_gnosis;
-        async move {
-            println!("[ARB_TO_GNOSIS] Triggering bridge resolution for epoch {}", epoch);
+    let arb_to_gnosis_resolver = {
+        let rpc = c.arbitrum_rpc.clone();
+        let wlt = wallet.clone();
+        let inbox = c.inbox_arb_to_gnosis;
+        let wlt_addr = wallet_address;
+        move |epoch: u64, claim: ClaimEvent| {
+            let rpc = rpc.clone();
+            let wlt = wlt.clone();
+            async move {
+                println!("[ARB_TO_GNOSIS] Triggering bridge resolution for epoch {}", epoch);
 
-            let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                .wallet(wlt)
-                .connect_http(rpc.parse()?);
-            let provider = Arc::new(provider);
+                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                    .wallet(wlt)
+                    .connect_http(rpc.parse()?);
+                let provider = Arc::new(provider);
 
-            let inbox_contract = IVeaInboxArbToGnosis::new(inbox, provider);
+                let inbox_contract = IVeaInboxArbToGnosis::new(inbox, provider);
 
-            // Convert ClaimEvent to the Claim struct expected by sendSnapshot
-            let outbox_claim = IVeaInboxArbToGnosis::Claim {
-                stateRoot: claim.state_root,
-                claimer: claim.claimer,
-                timestampClaimed: claim.timestamp_claimed,
-                timestampVerification: 0,
-                blocknumberVerification: 0,
-                honest: IVeaInboxArbToGnosis::Party::None,
-                challenger: Address::ZERO,
-            };
+                // Gas limit for AMB message - using a reasonable default
+                // This needs to be enough for the router to forward to Gnosis
+                let gas_limit = U256::from(2_000_000u64);
 
-            // Gas limit for AMB message - using a reasonable default
-            // This needs to be enough for the router to forward to Gnosis
-            let gas_limit = U256::from(2_000_000u64);
+                let tx = inbox_contract.sendSnapshot(U256::from(epoch), gas_limit, claim_to_arb_gnosis(&claim))
+                    .from(wlt_addr);
 
-            let tx = inbox_contract.sendSnapshot(U256::from(epoch), gas_limit, outbox_claim)
-                .from(wlt_addr);
+                let pending = tx.send().await?;
+                let receipt = pending.get_receipt().await?;
 
-            let pending = tx.send().await?;
-            let receipt = pending.get_receipt().await?;
+                if !receipt.status() {
+                    return Err("sendSnapshot transaction failed".into());
+                }
 
-            if !receipt.status() {
-                return Err("sendSnapshot transaction failed".into());
+                println!("[ARB_TO_GNOSIS] Bridge resolution triggered successfully for epoch {}", epoch);
+                println!("[ARB_TO_GNOSIS] Note: Message will take ~7 days to reach mainnet, then be forwarded to Gnosis");
+                Ok(())
             }
-
-            println!("[ARB_TO_GNOSIS] Bridge resolution triggered successfully for epoch {}", epoch);
-            println!("[ARB_TO_GNOSIS] Note: Message will take ~7 days to reach mainnet, then be forwarded to Gnosis");
-            Ok(())
         }
     };
 

@@ -19,6 +19,31 @@ pub fn make_claim(event: &ClaimEvent) -> IVeaOutboxArbToEth::Claim {
     }
 }
 
+/// Parse ClaimEvent from log data - extracted to reduce duplication
+async fn parse_claim_from_log<P: Provider>(
+    log: &alloy::rpc::types::Log,
+    provider: &Arc<P>,
+) -> Result<Option<ClaimEvent>, Box<dyn std::error::Error + Send + Sync>> {
+    if log.topics().len() < 3 || log.data().data.len() < 32 {
+        return Ok(None);
+    }
+
+    let claimer = Address::from_slice(&log.topics()[1].0[12..]);
+    let epoch = U256::from_be_bytes(log.topics()[2].0).to::<u64>();
+    let state_root = FixedBytes::<32>::from_slice(&log.data().data[0..32]);
+
+    let block_number = log.block_number.unwrap_or(0);
+    let block = provider.get_block_by_number(block_number.into()).await?;
+    let timestamp_claimed = block.unwrap().header.timestamp as u32;
+
+    Ok(Some(ClaimEvent {
+        epoch,
+        state_root,
+        claimer,
+        timestamp_claimed,
+    }))
+}
+
 pub struct ClaimHandler<P: Provider> {
     provider: Arc<P>,
     inbox_provider: Arc<P>,
@@ -75,33 +100,12 @@ impl<P: Provider> ClaimHandler<P> {
         let logs = self.provider.get_logs(&filter).await?;
 
         for log in logs {
-            if log.topics().len() >= 3 {
-                let claimer = Address::from_slice(&log.topics()[1].0[12..]);
-                let epoch = U256::from_be_bytes(log.topics()[2].0).to::<u64>();
-
+            if let Some(claim) = parse_claim_from_log(&log, &self.provider).await? {
                 // Only process epochs in our range
-                if epoch < from_epoch || epoch > to_epoch {
-                    continue;
+                if claim.epoch >= from_epoch && claim.epoch <= to_epoch {
+                    self.store_claim(claim.clone()).await;
+                    println!("Synced claim for epoch {}", claim.epoch);
                 }
-
-                if log.data().data.len() < 32 {
-                    continue;
-                }
-                let state_root = FixedBytes::<32>::from_slice(&log.data().data[0..32]);
-
-                let block_number = log.block_number.unwrap_or(0);
-                let block = self.provider.get_block_by_number(block_number.into()).await?;
-                let timestamp_claimed = block.unwrap().header.timestamp as u32;
-
-                let claim = ClaimEvent {
-                    epoch,
-                    state_root,
-                    claimer,
-                    timestamp_claimed,
-                };
-
-                self.store_claim(claim).await;
-                println!("Synced claim for epoch {}", epoch);
             }
         }
 
@@ -145,35 +149,14 @@ impl<P: Provider> ClaimHandler<P> {
         let logs = self.provider.get_logs(&filter).await?;
 
         if logs.is_empty() {
-            // FATAL: Claim hash exists but no event found - blockchain inconsistency
             panic!("FATAL: Claim hash exists for epoch {} but no Claimed event found. Blockchain state inconsistent!", epoch);
         }
 
-        let log = &logs[0];
+        let claim = parse_claim_from_log(&logs[0], &self.provider).await?
+            .ok_or_else(|| format!("FATAL: Invalid Claimed event format for epoch {}", epoch))?;
 
-        // Extract and store the claim
-        if log.topics().len() >= 3 {
-            let claimer = Address::from_slice(&log.topics()[1].0[12..]);
-            let state_root = FixedBytes::<32>::from_slice(&log.data().data[0..32]);
-
-            let block_number = log.block_number.unwrap_or(0);
-            let block = self.provider.get_block_by_number(block_number.into()).await?;
-            let timestamp_claimed = block.unwrap().header.timestamp as u32;
-
-            let claim = ClaimEvent {
-                epoch,
-                state_root,
-                claimer,
-                timestamp_claimed,
-            };
-
-            // Store it for future use
-            self.store_claim(claim.clone()).await;
-
-            Ok(Some(claim))
-        } else {
-            panic!("FATAL: Invalid Claimed event format for epoch {}", epoch);
-        }
+        self.store_claim(claim.clone()).await;
+        Ok(Some(claim))
     }
 
     pub async fn get_correct_state_root(&self, epoch: u64) -> Result<FixedBytes<32>, Box<dyn std::error::Error + Send + Sync>> {

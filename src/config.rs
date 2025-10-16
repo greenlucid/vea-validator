@@ -105,6 +105,14 @@ pub struct ProvidersWithWallet<P1, P2> {
     pub wallet_address: Address,
 }
 
+/// Holds providers for validator setup (without wallet creation) - used in main.rs.
+pub struct Providers<P1, P2> {
+    pub destination_provider: Arc<P1>,
+    pub arbitrum_provider: Arc<P1>,
+    pub destination_with_wallet: Arc<P2>,
+    pub arbitrum_with_wallet: Arc<P2>,
+}
+
 /// Creates providers and wallet from scratch (used in tests and convenience methods).
 ///
 /// This is the single source of truth for provider creation, ensuring tests and production
@@ -117,47 +125,25 @@ pub fn setup_providers_with_wallet(
     ProvidersWithWallet<impl Provider + Clone + use<>, impl Provider + Clone + use<>>,
     Box<dyn std::error::Error + Send + Sync>
 > {
-    let destination_provider = ProviderBuilder::new().connect_http(destination_rpc.parse()?);
-    let destination_provider = Arc::new(destination_provider);
-
-    let arbitrum_provider = ProviderBuilder::new().connect_http(arbitrum_rpc.parse()?);
-    let arbitrum_provider = Arc::new(arbitrum_provider);
-
     let signer = PrivateKeySigner::from_str(&private_key)?;
     let wallet_address = signer.address();
     let wallet = EthereumWallet::from(signer);
 
-    let destination_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
-        .wallet(wallet.clone())
-        .connect_provider(destination_provider.clone());
-    let destination_with_wallet = Arc::new(destination_with_wallet);
-
-    let arbitrum_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
-        .wallet(wallet.clone())
-        .connect_provider(arbitrum_provider.clone());
-    let arbitrum_with_wallet = Arc::new(arbitrum_with_wallet);
+    let providers = setup_providers(destination_rpc, arbitrum_rpc, wallet.clone())?;
 
     Ok(ProvidersWithWallet {
-        destination_provider,
-        arbitrum_provider,
-        destination_with_wallet,
-        arbitrum_with_wallet,
+        destination_provider: providers.destination_provider,
+        arbitrum_provider: providers.arbitrum_provider,
+        destination_with_wallet: providers.destination_with_wallet,
+        arbitrum_with_wallet: providers.arbitrum_with_wallet,
         wallet,
         wallet_address,
     })
 }
 
-/// Holds providers for validator setup (without wallet creation) - used in main.rs.
-pub struct Providers<P1, P2> {
-    pub destination_provider: Arc<P1>,
-    pub arbitrum_provider: Arc<P1>,
-    pub destination_with_wallet: Arc<P2>,
-    pub arbitrum_with_wallet: Arc<P2>,
-}
-
 /// Creates providers from an existing wallet (used in main.rs).
 ///
-/// This allows main.rs to create the wallet once and reuse it for multiple routes.
+/// This is the single source of truth for provider creation logic.
 pub fn setup_providers(
     destination_rpc: String,
     arbitrum_rpc: String,
