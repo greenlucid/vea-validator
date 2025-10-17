@@ -1,5 +1,5 @@
 use alloy::primitives::{Address, U256};
-use alloy::providers::ProviderBuilder;
+use alloy::providers::{ProviderBuilder, Provider};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::network::{Ethereum, EthereumWallet};
 use std::str::FromStr;
@@ -8,9 +8,34 @@ use vea_validator::{
     event_listener::{EventListener, SnapshotEvent, ClaimEvent},
     epoch_watcher::EpochWatcher,
     claim_handler::{ClaimHandler, ClaimAction, make_claim},
-    contracts::{IVeaInboxArbToEth, IVeaInboxArbToGnosis},
+    contracts::{IVeaInboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH},
     config::ValidatorConfig,
 };
+
+async fn check_balances(c: &ValidatorConfig, wallet: Address) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let signer = PrivateKeySigner::from_str(&c.private_key)?;
+    let eth_providers = vea_validator::config::setup_providers(c.ethereum_rpc.clone(), c.arbitrum_rpc.clone(), EthereumWallet::from(signer.clone()))?;
+    let gnosis_providers = vea_validator::config::setup_providers(c.gnosis_rpc.clone(), c.arbitrum_rpc.clone(), EthereumWallet::from(signer))?;
+
+    let eth_outbox = IVeaOutboxArbToEth::new(c.outbox_arb_to_eth, eth_providers.destination_provider.clone());
+    let gnosis_outbox = IVeaOutboxArbToGnosis::new(c.outbox_arb_to_gnosis, gnosis_providers.destination_provider.clone());
+
+    let eth_deposit = eth_outbox.deposit().call().await?;
+    let eth_balance = eth_providers.destination_provider.get_balance(wallet).await?;
+    if eth_balance < eth_deposit {
+        panic!("FATAL: Insufficient ETH balance. Need {} wei for deposit, have {} wei", eth_deposit, eth_balance);
+    }
+
+    let gnosis_deposit = gnosis_outbox.deposit().call().await?;
+    let weth = IWETH::new(c.weth_gnosis, gnosis_providers.destination_provider.clone());
+    let weth_balance = weth.balanceOf(wallet).call().await?;
+    if weth_balance < gnosis_deposit {
+        panic!("FATAL: Insufficient WETH balance on Gnosis. Need {} wei for deposit, have {} wei", gnosis_deposit, weth_balance);
+    }
+
+    println!("✓ Balance check passed: ETH={} wei, WETH={} wei", eth_balance, weth_balance);
+    Ok(())
+}
 
 fn claim_to_arb_eth(event: &ClaimEvent) -> IVeaInboxArbToEth::Claim {
     IVeaInboxArbToEth::Claim {
@@ -121,7 +146,7 @@ where
     let current_epoch: u64 = inbox_contract.epochFinalized().call().await?.try_into()?;
     println!("[{}] Starting validator for route", route_name);
     println!("[{}] Inbox: {:?}, Outbox: {:?}", route_name, inbox_address, outbox_address);
-    let sync_from = current_epoch.saturating_sub(10);
+    let sync_from = current_epoch.saturating_sub(100);
     println!("[{}] Syncing and verifying claims from epoch {} to {}...", route_name, sync_from, current_epoch);
     let startup_actions = claim_handler.startup_sync_and_verify(sync_from, current_epoch).await
         .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to sync and verify claims: {}", route_name, e));
@@ -202,13 +227,15 @@ where
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let c = ValidatorConfig::from_env()?;
 
     let signer = PrivateKeySigner::from_str(&c.private_key)?;
     let wallet_address = signer.address();
     let wallet = EthereumWallet::from(signer);
     println!("Validator wallet address: {}", wallet_address);
+
+    check_balances(&c, wallet_address).await?;
     let arb_to_eth_resolver = {
         let rpc = c.arbitrum_rpc.clone();
         let wlt = wallet.clone();

@@ -5,6 +5,27 @@ use crate::contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaOutboxArbToGno
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
+use tokio::time::{sleep, Duration};
+
+async fn retry_rpc<T, E, F, Fut>(mut f: F) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    for attempt in 0..5 {
+        match f().await {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt < 4 => {
+                let delay = 2u64.pow(attempt);
+                eprintln!("RPC call failed (attempt {}): {}, retrying in {}s...", attempt + 1, e, delay);
+                sleep(Duration::from_secs(delay)).await;
+            }
+            Err(e) => return Err(Box::new(e)),
+        }
+    }
+    unreachable!()
+}
 
 pub fn make_claim(event: &ClaimEvent) -> IVeaOutboxArbToEth::Claim {
     IVeaOutboxArbToEth::Claim {
@@ -111,7 +132,9 @@ impl<P: Provider> ClaimHandler<P> {
             }
         }
         let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
-        let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
+        let claim_hash = retry_rpc(|| async {
+            outbox.claimHashes(U256::from(epoch)).call().await
+        }).await?;
         if claim_hash == FixedBytes::<32>::ZERO {
             return Ok(None);
         }
@@ -124,7 +147,9 @@ impl<P: Provider> ClaimHandler<P> {
             .address(self.outbox_address)
             .event_signature(event_hash)
             .topic2(U256::from(epoch));
-        let logs = self.provider.get_logs(&filter).await?;
+        let logs = retry_rpc(|| async {
+            self.provider.get_logs(&filter).await
+        }).await?;
         if logs.is_empty() {
             panic!("FATAL: Claim hash exists for epoch {} but no Claimed event found. Blockchain state inconsistent!", epoch);
         }
@@ -136,8 +161,9 @@ impl<P: Provider> ClaimHandler<P> {
 
     pub async fn get_correct_state_root(&self, epoch: u64) -> Result<FixedBytes<32>, Box<dyn std::error::Error + Send + Sync>> {
         let inbox = IVeaInboxArbToEth::new(self.inbox_address, self.inbox_provider.clone());
-        let state_root = inbox.snapshots(U256::from(epoch)).call().await?;
-        Ok(state_root)
+        retry_rpc(|| async {
+            inbox.snapshots(U256::from(epoch)).call().await
+        }).await
     }
 
     pub async fn verify_claim(&self, claim: &ClaimEvent) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
@@ -147,7 +173,9 @@ impl<P: Provider> ClaimHandler<P> {
 
     pub async fn ensure_snapshot_saved(&self, epoch: u64) -> Result<FixedBytes<32>, Box<dyn std::error::Error + Send + Sync>> {
         let inbox = IVeaInboxArbToEth::new(self.inbox_address, self.inbox_provider.clone());
-        let existing_snapshot = inbox.snapshots(U256::from(epoch)).call().await?;
+        let existing_snapshot = retry_rpc(|| async {
+            inbox.snapshots(U256::from(epoch)).call().await
+        }).await?;
         if existing_snapshot != FixedBytes::<32>::ZERO {
             return Ok(existing_snapshot);
         }
@@ -157,12 +185,16 @@ impl<P: Provider> ClaimHandler<P> {
         if !receipt.status() {
             return Err("saveSnapshot transaction failed".into());
         }
-        let saved_snapshot = inbox.snapshots(U256::from(epoch)).call().await?;
+        let saved_snapshot = retry_rpc(|| async {
+            inbox.snapshots(U256::from(epoch)).call().await
+        }).await?;
         Ok(saved_snapshot)
     }
     pub async fn submit_claim(&self, epoch: u64, state_root: FixedBytes<32>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
-        let deposit = outbox.deposit().call().await?;
+        let deposit = retry_rpc(|| async {
+            outbox.deposit().call().await
+        }).await?;
         let tx = outbox.claim(U256::from(epoch), state_root)
             .from(self.wallet_address)
             .value(deposit);
@@ -176,9 +208,13 @@ impl<P: Provider> ClaimHandler<P> {
     pub async fn challenge_claim(&self, epoch: u64, claim: IVeaOutboxArbToEth::Claim) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(weth_addr) = self.weth_address {
             let outbox_gnosis = IVeaOutboxArbToGnosis::new(self.outbox_address, self.provider.clone());
-            let deposit = outbox_gnosis.deposit().call().await?;
+            let deposit = retry_rpc(|| async {
+                outbox_gnosis.deposit().call().await
+            }).await?;
             let weth = IWETH::new(weth_addr, self.provider.clone());
-            let current_allowance = weth.allowance(self.wallet_address, self.outbox_address).call().await?;
+            let current_allowance = retry_rpc(|| async {
+                weth.allowance(self.wallet_address, self.outbox_address).call().await
+            }).await?;
             if current_allowance < deposit {
                 let approve_tx = weth.approve(self.outbox_address, deposit)
                     .from(self.wallet_address);
@@ -211,7 +247,9 @@ impl<P: Provider> ClaimHandler<P> {
             }
         } else {
             let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
-            let deposit = outbox.deposit().call().await?;
+            let deposit = retry_rpc(|| async {
+                outbox.deposit().call().await
+            }).await?;
             let tx = outbox.challenge(U256::from(epoch), claim, self.wallet_address)
                 .from(self.wallet_address)
                 .value(deposit);

@@ -18,7 +18,7 @@ pub struct ValidatorConfig {
 }
 
 impl ValidatorConfig {
-    pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_env() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         dotenv::dotenv().ok();
 
         let arbitrum_rpc = std::env::var("ARBITRUM_RPC_URL")
