@@ -32,7 +32,7 @@ impl<P: Provider> EpochWatcher<P> {
         loop {
             let current_epoch = self.get_current_epoch(epoch_period).await?;
             if current_epoch > last_epoch {
-                let _ = handler(last_epoch).await;
+                handler(last_epoch).await?;
                 last_epoch = current_epoch;
             }
             check_interval.tick().await;

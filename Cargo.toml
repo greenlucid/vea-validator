@@ -3,6 +3,14 @@ name = "vea-validator"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+doctest = false
+
+[[bin]]
+name = "vea-validator"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 alloy = "1.0.27"
 anyhow = "1.0.99"
