@@ -8,8 +8,11 @@ Must be extremely DRY. Must have no excessive comments. Few LOCs is appreciated.
 
 Make a super conclusion there with WHATS LEFT and only whats left. and btw anything NOT in here in this implementation proposal, MUST be removed, as there must be ZERO redundancy in the repo. Useless code must be nuked.
 
-Desired Wishlist:
+Extras That are Intended:
 
+- balance check, to verify whether if theres enough capital to challenge if needed
+- rpc health check, to assert whether if the rpc works. they must work 24/7
+- retry logic is important. while we want to crash early (to identify dangerous bugs), in practice when we're in production, rpcs will drop txs, shit will happen, and if the validator crashes someone may sneak a bad claim, which is extremely bad
 
 
 Technical implementation:
@@ -30,8 +33,6 @@ bef_epoch -> check if there are any unsaved messages in the inbox, if so, call `
 aft_epoch -> check if last epoch was saved via saveSnapshot, if so, check if outbox has a claim pending (e.g. someone already submitted theirs). if not, make a claim.
 
 on listen to Claim having been made event: verify the hash on the outbox is the same as the hash in the inbox for the given epoch. if not, trigger challenge routine with the correct hash
-
-on listen to Start verification event: apparently, nothing?! research...
 
 challenge routine: call outbox.challenge() (with the proper arguments), then you go to inbox.sendSnapshot()
 

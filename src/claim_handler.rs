@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
-
 async fn retry_rpc<T, E, F, Fut>(mut f: F) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
 where
     F: FnMut() -> Fut,
@@ -26,7 +25,6 @@ where
     }
     unreachable!()
 }
-
 pub fn make_claim(event: &ClaimEvent) -> IVeaOutboxArbToEth::Claim {
     IVeaOutboxArbToEth::Claim {
         stateRoot: event.state_root,
@@ -38,31 +36,6 @@ pub fn make_claim(event: &ClaimEvent) -> IVeaOutboxArbToEth::Claim {
         challenger: Address::ZERO,
     }
 }
-
-async fn parse_claim_from_log<P: Provider>(
-    log: &alloy::rpc::types::Log,
-    provider: &Arc<P>,
-) -> Result<Option<ClaimEvent>, Box<dyn std::error::Error + Send + Sync>> {
-    if log.topics().len() < 3 || log.data().data.len() < 32 {
-        return Ok(None);
-    }
-
-    let claimer = Address::from_slice(&log.topics()[1].0[12..]);
-    let epoch = U256::from_be_bytes(log.topics()[2].0).to::<u64>();
-    let state_root = FixedBytes::<32>::from_slice(&log.data().data[0..32]);
-
-    let block_number = log.block_number.unwrap_or(0);
-    let block = provider.get_block_by_number(block_number.into()).await?;
-    let timestamp_claimed = block.unwrap().header.timestamp as u32;
-
-    Ok(Some(ClaimEvent {
-        epoch,
-        state_root,
-        claimer,
-        timestamp_claimed,
-    }))
-}
-
 pub struct ClaimHandler<P: Provider> {
     provider: Arc<P>,
     inbox_provider: Arc<P>,
@@ -72,7 +45,6 @@ pub struct ClaimHandler<P: Provider> {
     weth_address: Option<Address>,
     claims: Arc<RwLock<HashMap<u64, ClaimEvent>>>,
 }
-
 impl<P: Provider> ClaimHandler<P> {
     pub fn new(
         provider: Arc<P>,
@@ -92,59 +64,24 @@ impl<P: Provider> ClaimHandler<P> {
             claims: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-
     pub async fn store_claim(&self, claim: ClaimEvent) {
         let mut claims = self.claims.write().await;
         claims.insert(claim.epoch, claim);
     }
-
     pub async fn get_claim_for_epoch(&self, epoch: u64) -> Result<Option<ClaimEvent>, Box<dyn std::error::Error + Send + Sync>> {
-        {
-            let claims = self.claims.read().await;
-            if let Some(claim) = claims.get(&epoch) {
-                return Ok(Some(claim.clone()));
-            }
-        }
-        let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
-        let claim_hash = retry_rpc(|| async {
-            outbox.claimHashes(U256::from(epoch)).call().await
-        }).await?;
-        if claim_hash == FixedBytes::<32>::ZERO {
-            return Ok(None);
-        }
-        eprintln!("CRITICAL: Claim exists for epoch {} but not in local storage. Event listener may have missed it.", epoch);
-        use alloy::rpc::types::Filter;
-        use alloy::primitives::keccak256;
-        let event_signature = "Claimed(address,uint256,bytes32)";
-        let event_hash = keccak256(event_signature.as_bytes());
-        let filter = Filter::new()
-            .address(self.outbox_address)
-            .event_signature(event_hash)
-            .topic2(U256::from(epoch));
-        let logs = retry_rpc(|| async {
-            self.provider.get_logs(&filter).await
-        }).await?;
-        if logs.is_empty() {
-            panic!("FATAL: Claim hash exists for epoch {} but no Claimed event found. Blockchain state inconsistent!", epoch);
-        }
-        let claim = parse_claim_from_log(&logs[0], &self.provider).await?
-            .ok_or_else(|| format!("FATAL: Invalid Claimed event format for epoch {}", epoch))?;
-        self.store_claim(claim.clone()).await;
-        Ok(Some(claim))
+        let claims = self.claims.read().await;
+        Ok(claims.get(&epoch).cloned())
     }
-
     pub async fn get_correct_state_root(&self, epoch: u64) -> Result<FixedBytes<32>, Box<dyn std::error::Error + Send + Sync>> {
         let inbox = IVeaInboxArbToEth::new(self.inbox_address, self.inbox_provider.clone());
         retry_rpc(|| async {
             inbox.snapshots(U256::from(epoch)).call().await
         }).await
     }
-
     pub async fn verify_claim(&self, claim: &ClaimEvent) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let correct_state_root = self.get_correct_state_root(claim.epoch).await?;
         Ok(claim.state_root == correct_state_root)
     }
-
     pub async fn submit_claim(&self, epoch: u64, state_root: FixedBytes<32>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
         let deposit = retry_rpc(|| async {
@@ -216,7 +153,6 @@ impl<P: Provider> ClaimHandler<P> {
         }
         Ok(())
     }
-
     pub async fn handle_epoch_end(&self, epoch: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let inbox = IVeaInboxArbToEth::new(self.inbox_address, self.inbox_provider.clone());
         let existing_snapshot = retry_rpc(|| async {
@@ -233,7 +169,6 @@ impl<P: Provider> ClaimHandler<P> {
         }
         Ok(())
     }
-
     pub async fn handle_claim_event(&self, claim: ClaimEvent) -> Result<ClaimAction, Box<dyn std::error::Error + Send + Sync>> {
         println!("Handling claim event for epoch {}", claim.epoch);
         self.store_claim(claim.clone()).await;
@@ -250,7 +185,6 @@ impl<P: Provider> ClaimHandler<P> {
         }
     }
 }
-
 #[derive(Debug, Clone)]
 pub enum ClaimAction {
     None,
@@ -262,54 +196,4 @@ pub enum ClaimAction {
         epoch: u64,
         incorrect_claim: ClaimEvent,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy::providers::ProviderBuilder;
-    use std::str::FromStr;
-
-    #[tokio::test]
-    async fn test_handle_epoch_end_no_claim() {
-        dotenv::dotenv().ok();
-        
-        let arbitrum_rpc = std::env::var("ARBITRUM_RPC_URL")
-            .expect("ARBITRUM_RPC_URL must be set");
-        let ethereum_rpc = std::env::var("ETHEREUM_RPC_URL")
-            .or_else(|_| std::env::var("MAINNET_RPC_URL"))
-            .expect("ETHEREUM_RPC_URL or MAINNET_RPC_URL must be set");
-        
-        let provider = ProviderBuilder::new()
-            .connect_http(ethereum_rpc.parse().unwrap());
-        let provider = Arc::new(provider);
-        
-        let inbox_provider = ProviderBuilder::new()
-            .connect_http(arbitrum_rpc.parse().unwrap());
-        let inbox_provider = Arc::new(inbox_provider);
-        
-        // Get actual contract addresses from env
-        let outbox_address = std::env::var("VEA_OUTBOX_ARB_TO_ETH")
-            .ok()
-            .and_then(|s| Address::from_str(&s).ok())
-            .expect("VEA_OUTBOX_ARB_TO_ETH must be set for tests");
-            
-        let inbox_address = Address::from_str(
-            &std::env::var("VEA_INBOX_ARB_TO_ETH").expect("VEA_INBOX_ARB_TO_ETH must be set for tests")
-        ).expect("Invalid VEA_INBOX_ARB_TO_ETH address");
-        
-        let handler = ClaimHandler::new(
-            provider,
-            inbox_provider,
-            outbox_address,
-            inbox_address,
-            Address::from([0x01; 20]), // dummy wallet for tests
-            None, // No WETH for ARB_TO_ETH route
-        );
-        
-        // Test that handler can be created and basic functions work
-        // This mainly verifies the setup is correct
-        let result = handler.get_claim_for_epoch(0).await;
-        assert!(result.is_ok(), "Should be able to query epoch 0");
-    }
 }

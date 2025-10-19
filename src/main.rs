@@ -12,32 +12,26 @@ use vea_validator::{
     config::ValidatorConfig,
     proof_relay::ProofRelay,
 };
-
 async fn check_balances(c: &ValidatorConfig, wallet: Address) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let signer = PrivateKeySigner::from_str(&c.private_key)?;
     let eth_providers = vea_validator::config::setup_providers(c.ethereum_rpc.clone(), c.arbitrum_rpc.clone(), EthereumWallet::from(signer.clone()))?;
     let gnosis_providers = vea_validator::config::setup_providers(c.gnosis_rpc.clone(), c.arbitrum_rpc.clone(), EthereumWallet::from(signer))?;
-
     let eth_outbox = IVeaOutboxArbToEth::new(c.outbox_arb_to_eth, eth_providers.destination_provider.clone());
     let gnosis_outbox = IVeaOutboxArbToGnosis::new(c.outbox_arb_to_gnosis, gnosis_providers.destination_provider.clone());
-
     let eth_deposit = eth_outbox.deposit().call().await?;
     let eth_balance = eth_providers.destination_provider.get_balance(wallet).await?;
     if eth_balance < eth_deposit {
         panic!("FATAL: Insufficient ETH balance. Need {} wei for deposit, have {} wei", eth_deposit, eth_balance);
     }
-
     let gnosis_deposit = gnosis_outbox.deposit().call().await?;
     let weth = IWETH::new(c.weth_gnosis, gnosis_providers.destination_provider.clone());
     let weth_balance = weth.balanceOf(wallet).call().await?;
     if weth_balance < gnosis_deposit {
         panic!("FATAL: Insufficient WETH balance on Gnosis. Need {} wei for deposit, have {} wei", gnosis_deposit, weth_balance);
     }
-
     println!("✓ Balance check passed: ETH={} wei, WETH={} wei", eth_balance, weth_balance);
     Ok(())
 }
-
 fn claim_to_arb_eth(event: &ClaimEvent) -> IVeaInboxArbToEth::Claim {
     IVeaInboxArbToEth::Claim {
         stateRoot: event.state_root,
@@ -49,7 +43,6 @@ fn claim_to_arb_eth(event: &ClaimEvent) -> IVeaInboxArbToEth::Claim {
         challenger: Address::ZERO,
     }
 }
-
 fn claim_to_arb_gnosis(event: &ClaimEvent) -> IVeaInboxArbToGnosis::Claim {
     IVeaInboxArbToGnosis::Claim {
         stateRoot: event.state_root,
@@ -61,7 +54,6 @@ fn claim_to_arb_gnosis(event: &ClaimEvent) -> IVeaInboxArbToGnosis::Claim {
         challenger: Address::ZERO,
     }
 }
-
 async fn handle_claim_action<P: alloy::providers::Provider, F, Fut>(
     handler: &Arc<ClaimHandler<P>>,
     action: ClaimAction,
@@ -100,7 +92,6 @@ async fn handle_claim_action<P: alloy::providers::Provider, F, Fut>(
         }
     }
 }
-
 async fn run_validator_for_route<F, Fut>(
     route_name: &str,
     inbox_address: Address,
@@ -117,7 +108,6 @@ where
     Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send,
 {
     let providers = vea_validator::config::setup_providers(destination_rpc.clone(), arbitrum_rpc.clone(), wallet)?;
-
     let claim_handler = Arc::new(ClaimHandler::new(
         providers.destination_with_wallet.clone(),
         providers.arbitrum_with_wallet.clone(),
@@ -126,29 +116,22 @@ where
         wallet_address,
         weth_address,
     ));
-
     let event_listener_outbox = EventListener::new(
         providers.destination_provider.clone(),
         outbox_address,
     );
-
     let event_listener_inbox = EventListener::new(
         providers.arbitrum_provider.clone(),
         inbox_address,
     );
-
     let proof_relay = Arc::new(ProofRelay::new());
-
     let epoch_watcher = EpochWatcher::new(
         providers.arbitrum_provider.clone(),
     );
-
     let inbox_contract = IVeaInboxArbToEth::new(inbox_address, providers.arbitrum_provider.clone());
     let epoch_period: u64 = inbox_contract.epochPeriod().call().await?.try_into()?;
-
     println!("[{}] Starting validator for route", route_name);
     println!("[{}] Inbox: {:?}, Outbox: {:?}", route_name, inbox_address, outbox_address);
-
     let claim_handler_before = claim_handler.clone();
     let route_before = route_name.to_string();
     let claim_handler_after = claim_handler.clone();
@@ -198,7 +181,6 @@ where
             },
         ).await
     });
-
     let claim_handler_for_claims = claim_handler.clone();
     let route_claim = route_name.to_string();
     let bridge_resolver_claim = bridge_resolver.clone();
@@ -216,7 +198,6 @@ where
             })
         }).await
     });
-
     let proof_relay_for_snapshot_sent = proof_relay.clone();
     let route_snapshot_sent = route_name.to_string();
     let snapshot_sent_handle = tokio::spawn(async move {
@@ -230,7 +211,6 @@ where
             })
         }).await
     });
-
     let route_relay = route_name.to_string();
     let relay_handle = tokio::spawn(async move {
         proof_relay.watch_and_relay(move |epoch, ticket_id| {
@@ -242,7 +222,6 @@ where
             })
         }).await
     });
-
     tokio::select! {
         _ = epoch_handle => println!("[{}] Epoch watcher stopped", route_name),
         _ = claim_handle => println!("[{}] Claim watcher stopped", route_name),
@@ -251,16 +230,13 @@ where
     }
     Ok(())
 }
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let c = ValidatorConfig::from_env()?;
-
     let signer = PrivateKeySigner::from_str(&c.private_key)?;
     let wallet_address = signer.address();
     let wallet = EthereumWallet::from(signer);
     println!("Validator wallet address: {}", wallet_address);
-
     check_balances(&c, wallet_address).await?;
     let arb_to_eth_resolver = {
         let rpc = c.arbitrum_rpc.clone();
@@ -272,7 +248,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let wlt = wlt.clone();
             async move {
                 println!("[ARB_TO_ETH] Triggering bridge resolution for epoch {}", epoch);
-
                 let provider = ProviderBuilder::<_, _, Ethereum>::new()
                     .wallet(wlt)
                     .connect_http(rpc.parse()?);
@@ -280,8 +255,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let inbox_contract = IVeaInboxArbToEth::new(inbox, provider);
                 let tx = inbox_contract.sendSnapshot(U256::from(epoch), claim_to_arb_eth(&claim))
                     .from(wlt_addr);
-                let pending = tx.send().await?;
-                let receipt = pending.get_receipt().await?;
+                let tx_result = tx.send().await?;
+                let receipt = tx_result.get_receipt().await?;
                 if !receipt.status() {
                     return Err("sendSnapshot transaction failed".into());
                 }
@@ -290,7 +265,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         }
     };
-
     let arb_to_gnosis_resolver = {
         let rpc = c.arbitrum_rpc.clone();
         let wlt = wallet.clone();
@@ -301,7 +275,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let wlt = wlt.clone();
             async move {
                 println!("[ARB_TO_GNOSIS] Triggering bridge resolution for epoch {}", epoch);
-
                 let provider = ProviderBuilder::<_, _, Ethereum>::new()
                     .wallet(wlt)
                     .connect_http(rpc.parse()?);
@@ -310,18 +283,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let gas_limit = U256::from(2_000_000u64);
                 let tx = inbox_contract.sendSnapshot(U256::from(epoch), gas_limit, claim_to_arb_gnosis(&claim))
                     .from(wlt_addr);
-                let pending = tx.send().await?;
-                let receipt = pending.get_receipt().await?;
+                let tx_result = tx.send().await?;
+                let receipt = tx_result.get_receipt().await?;
                 if !receipt.status() {
                     return Err("sendSnapshot transaction failed".into());
                 }
                 println!("[ARB_TO_GNOSIS] Bridge resolution triggered successfully for epoch {}", epoch);
-                println!("[ARB_TO_GNOSIS] Note: Message will take ~7 days to reach mainnet, then be forwarded to Gnosis");
                 Ok(())
             }
         }
     };
-
     let arb_to_eth_handle = tokio::spawn(run_validator_for_route(
         "ARB_TO_ETH",
         c.inbox_arb_to_eth,

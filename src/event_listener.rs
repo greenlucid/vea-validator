@@ -5,7 +5,6 @@ use alloy::primitives::keccak256;
 use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
-
 #[derive(Debug, Clone)]
 pub struct ClaimEvent {
     pub epoch: u64,
@@ -13,19 +12,16 @@ pub struct ClaimEvent {
     pub claimer: Address,
     pub timestamp_claimed: u32,
 }
-
 #[derive(Debug, Clone)]
 pub struct SnapshotSentEvent {
     pub epoch: u64,
     pub ticket_id: FixedBytes<32>,
     pub timestamp: u64,
 }
-
 pub struct EventListener<P: Provider> {
     provider: Arc<P>,
     contract_address: Address,
 }
-
 impl<P: Provider> EventListener<P> {
     pub fn new(provider: Arc<P>, contract_address: Address) -> Self {
         Self {
@@ -33,7 +29,6 @@ impl<P: Provider> EventListener<P> {
             contract_address,
         }
     }
-
     pub async fn watch_claims<F, Fut>(&self, handler: F) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: Fn(ClaimEvent) -> Fut + Send + 'static + Clone,
@@ -41,12 +36,10 @@ impl<P: Provider> EventListener<P> {
     {
         let event_signature = "Claimed(address,uint256,bytes32)";
         let event_hash = keccak256(event_signature.as_bytes());
-
         loop {
             let filter = Filter::new()
                 .address(self.contract_address)
                 .event_signature(event_hash);
-
             match self.provider.watch_logs(&filter).await {
                 Ok(subscription) => {
                     let mut stream = subscription.into_stream();
@@ -76,7 +69,6 @@ impl<P: Provider> EventListener<P> {
             sleep(Duration::from_secs(5)).await;
         }
     }
-
     pub async fn watch_snapshot_sent<F, Fut>(&self, handler: F) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: Fn(SnapshotSentEvent) -> Fut + Send + 'static + Clone,
@@ -84,12 +76,10 @@ impl<P: Provider> EventListener<P> {
     {
         let event_signature = "SnapshotSent(uint256,bytes32)";
         let event_hash = keccak256(event_signature.as_bytes());
-
         loop {
             let filter = Filter::new()
                 .address(self.contract_address)
                 .event_signature(event_hash);
-
             match self.provider.watch_logs(&filter).await {
                 Ok(subscription) => {
                     let mut stream = subscription.into_stream();
