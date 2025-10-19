@@ -5,6 +5,7 @@ edition = "2024"
 
 [lib]
 doctest = false
+test = false
 
 [[bin]]
 name = "vea-validator"

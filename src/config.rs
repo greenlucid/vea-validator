@@ -15,6 +15,32 @@ pub struct ValidatorConfig {
     pub weth_gnosis: Address,
 }
 impl ValidatorConfig {
+    pub fn setup_arb_to_eth(&self) -> Result<
+        Providers<impl Provider + Clone + use<>, impl Provider + Clone + use<>>,
+        Box<dyn std::error::Error + Send + Sync>
+    > {
+        use alloy::signers::local::PrivateKeySigner;
+        let signer = PrivateKeySigner::from_str(&self.private_key)?;
+        let wallet_address = signer.address();
+        let wallet = EthereumWallet::from(signer);
+        let mut providers = setup_providers(self.ethereum_rpc.clone(), self.arbitrum_rpc.clone(), wallet.clone())?;
+        providers.wallet = wallet;
+        providers.wallet_address = wallet_address;
+        Ok(providers)
+    }
+    pub fn setup_arb_to_gnosis(&self) -> Result<
+        Providers<impl Provider + Clone + use<>, impl Provider + Clone + use<>>,
+        Box<dyn std::error::Error + Send + Sync>
+    > {
+        use alloy::signers::local::PrivateKeySigner;
+        let signer = PrivateKeySigner::from_str(&self.private_key)?;
+        let wallet_address = signer.address();
+        let wallet = EthereumWallet::from(signer);
+        let mut providers = setup_providers(self.gnosis_rpc.clone(), self.arbitrum_rpc.clone(), wallet.clone())?;
+        providers.wallet = wallet;
+        providers.wallet_address = wallet_address;
+        Ok(providers)
+    }
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         dotenv::dotenv().ok();
         let arbitrum_rpc = std::env::var("ARBITRUM_RPC_URL")
@@ -66,6 +92,8 @@ pub struct Providers<P1, P2> {
     pub arbitrum_provider: Arc<P1>,
     pub destination_with_wallet: Arc<P2>,
     pub arbitrum_with_wallet: Arc<P2>,
+    pub wallet: alloy::network::EthereumWallet,
+    pub wallet_address: Address,
 }
 pub fn setup_providers(
     destination_rpc: String,
@@ -84,7 +112,7 @@ pub fn setup_providers(
         .connect_provider(destination_provider.clone());
     let destination_with_wallet = Arc::new(destination_with_wallet);
     let arbitrum_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
-        .wallet(wallet)
+        .wallet(wallet.clone())
         .connect_provider(arbitrum_provider.clone());
     let arbitrum_with_wallet = Arc::new(arbitrum_with_wallet);
     Ok(Providers {
@@ -92,5 +120,7 @@ pub fn setup_providers(
         arbitrum_provider,
         destination_with_wallet,
         arbitrum_with_wallet,
+        wallet,
+        wallet_address: Address::ZERO,
     })
 }
