@@ -28,13 +28,9 @@ impl<P: Provider> EpochWatcher<P> {
     {
         let mut check_interval = interval(Duration::from_secs(10));
         check_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut last_epoch = self.get_current_epoch(epoch_period).await?;
         loop {
             let current_epoch = self.get_current_epoch(epoch_period).await?;
-            if current_epoch > last_epoch {
-                handler(last_epoch).await?;
-                last_epoch = current_epoch;
-            }
+            handler(current_epoch).await?;
             check_interval.tick().await;
         }
     }

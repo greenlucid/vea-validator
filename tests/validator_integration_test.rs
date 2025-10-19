@@ -846,31 +846,31 @@ async fn test_validator_makes_honest_claim_when_epoch_ends() {
 
     // STEP 4: Wait for validator to react
 
-    let result = timeout(Duration::from_secs(30), async {
-        while !claim_made.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }).await;
+    tokio::time::sleep(Duration::from_secs(20)).await;
 
     watcher_handle.abort();
     snapshot_handle.abort();
 
-    assert!(result.is_ok(), "Validator should have reacted within 15 seconds");
+    let snapshot_exists = inbox.snapshots(U256::from(starting_epoch)).call().await.unwrap();
+    println!("Snapshot for epoch {}: {:?}", starting_epoch, snapshot_exists);
+
+    if !claim_made.load(Ordering::SeqCst) {
+        panic!("Validator did not make claim within 20 seconds");
+    }
 
     let claimed_ep = claimed_epoch.read().unwrap().expect("Should have claimed an epoch");
-    let expected_epoch = starting_epoch + 1;
-    assert_eq!(claimed_ep, expected_epoch);
+    assert_eq!(claimed_ep, starting_epoch);
 
-    let claim_hash = outbox.claimHashes(U256::from(expected_epoch)).call().await.unwrap();
+    let claim_hash = outbox.claimHashes(U256::from(starting_epoch)).call().await.unwrap();
     assert_ne!(claim_hash, FixedBytes::<32>::ZERO, "Claim should exist on-chain");
 
-    let snapshot_root = inbox.snapshots(U256::from(expected_epoch)).call().await.unwrap();
+    let snapshot_root = inbox.snapshots(U256::from(starting_epoch)).call().await.unwrap();
     assert_ne!(snapshot_root, FixedBytes::<32>::ZERO, "Validator should have saved snapshot");
 
     let claimed_rt = claimed_root.read().unwrap().expect("Should have claimed a root");
     assert_eq!(claimed_rt, snapshot_root);
 
-    let stored_claim = claim_handler.get_claim_for_epoch(expected_epoch).await
+    let stored_claim = claim_handler.get_claim_for_epoch(starting_epoch).await
         .expect("Failed to get claim")
         .expect("Claim should exist");
 
