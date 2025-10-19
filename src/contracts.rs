@@ -154,6 +154,29 @@ sol! {
         function mintMock(address to, uint256 amount) external;
         function burn(uint256 wad) external;
     }
+    #[derive(Debug)]
+    #[sol(rpc)]
+    interface IArbSys {
+        event L2ToL1Tx(address caller, address indexed destination, uint256 indexed hash, uint256 indexed position, uint256 arbBlockNum, uint256 ethBlockNum, uint256 timestamp, uint256 callvalue, bytes data);
+        function sendTxToL1(address destination, bytes calldata data) external payable returns (uint256);
+        function sendMerkleTreeState() external view returns (uint256 size, bytes32 root, bytes32[] memory partials);
+    }
+    #[derive(Debug)]
+    #[sol(rpc)]
+    interface IOutbox {
+        function l2ToL1Sender() external view returns (address);
+        function executeTransaction(
+            bytes32[] calldata proof,
+            uint256 index,
+            address l2Sender,
+            address to,
+            uint256 l2Block,
+            uint256 l1Block,
+            uint256 l2Timestamp,
+            uint256 value,
+            bytes calldata data
+        ) external;
+    }
 }
 
 pub type Claim = IVeaOutboxArbToEth::Claim;
