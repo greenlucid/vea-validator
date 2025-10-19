@@ -341,9 +341,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         arb_to_gnosis_resolver,
     ));
     println!("Running validators for both ARB_TO_ETH and ARB_TO_GNOSIS routes simultaneously...");
+
+    // Monitor both routes - if one fails, log but continue with the other
+    let monitor_handle = tokio::spawn(async move {
+        let (eth_result, gnosis_result) = tokio::join!(arb_to_eth_handle, arb_to_gnosis_handle);
+
+        match eth_result {
+            Ok(Ok(())) => println!("ARB_TO_ETH validator stopped gracefully"),
+            Ok(Err(e)) => eprintln!("ARB_TO_ETH validator failed: {}", e),
+            Err(e) => eprintln!("ARB_TO_ETH validator panicked: {}", e),
+        }
+
+        match gnosis_result {
+            Ok(Ok(())) => println!("ARB_TO_GNOSIS validator stopped gracefully"),
+            Ok(Err(e)) => eprintln!("ARB_TO_GNOSIS validator failed: {}", e),
+            Err(e) => eprintln!("ARB_TO_GNOSIS validator panicked: {}", e),
+        }
+    });
+
     tokio::select! {
-        _ = arb_to_eth_handle => println!("ARB_TO_ETH validator stopped"),
-        _ = arb_to_gnosis_handle => println!("ARB_TO_GNOSIS validator stopped"),
+        _ = monitor_handle => println!("Both routes stopped"),
         _ = tokio::signal::ctrl_c() => println!("\nShutting down..."),
     }
     Ok(())
