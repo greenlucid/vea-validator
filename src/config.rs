@@ -19,6 +19,7 @@ pub struct Route {
     pub outbox_chain_id: u64,
     pub outbox_address: Address,
     pub outbox_rpc: String,
+    pub weth_address: Option<Address>,
 }
 
 pub struct ValidatorConfig {
@@ -41,6 +42,7 @@ impl ValidatorConfig {
                 outbox_chain_id: 1,
                 outbox_address: self.outbox_arb_to_eth,
                 outbox_rpc: self.chains.get(&1).expect("Ethereum").rpc_url.clone(),
+                weth_address: self.chains.get(&1).expect("Ethereum").deposit_token,
             },
             Route {
                 name: "ARB_TO_GNOSIS",
@@ -50,6 +52,7 @@ impl ValidatorConfig {
                 outbox_chain_id: 100,
                 outbox_address: self.outbox_arb_to_gnosis,
                 outbox_rpc: self.chains.get(&100).expect("Gnosis").rpc_url.clone(),
+                weth_address: self.chains.get(&100).expect("Gnosis").deposit_token,
             },
         ]
     }

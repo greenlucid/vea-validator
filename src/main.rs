@@ -80,7 +80,6 @@ async fn handle_claim_action<F, Fut>(
 async fn run_validator_for_route<F, Fut>(
     route: vea_validator::config::Route,
     wallet: EthereumWallet,
-    weth_address: Option<Address>,
     bridge_resolver: F,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
@@ -93,7 +92,7 @@ where
         route.inbox_address,
         route.outbox_address,
         wallet.clone(),
-        weth_address,
+        route.weth_address,
     ));
     let event_listener_outbox = EventListener::new(
         route.outbox_rpc.clone(),
@@ -314,13 +313,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let arb_to_eth_handle = tokio::spawn(run_validator_for_route(
         routes[0].clone(),
         wallet.clone(),
-        None,
         arb_to_eth_resolver,
     ));
     let arb_to_gnosis_handle = tokio::spawn(run_validator_for_route(
         routes[1].clone(),
         wallet.clone(),
-        c.chains.get(&100).expect("Gnosis").deposit_token,
         arb_to_gnosis_resolver,
     ));
     println!("Running validators for both ARB_TO_ETH and ARB_TO_GNOSIS routes simultaneously...");
