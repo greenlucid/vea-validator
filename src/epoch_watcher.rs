@@ -33,11 +33,10 @@ impl<P: Provider> EpochWatcher<P> {
             let current_epoch = now / epoch_period;
             let next_epoch_start = (current_epoch + 1) * epoch_period;
             let time_until_next_epoch = next_epoch_start.saturating_sub(now);
-            if time_until_next_epoch <= BEFORE_EPOCH_BUFFER {
-                if last_before_epoch != Some(current_epoch) {
-                    before_handler(current_epoch).await?;
-                    last_before_epoch = Some(current_epoch);
-                }
+            if time_until_next_epoch <= BEFORE_EPOCH_BUFFER
+                && last_before_epoch != Some(current_epoch) {
+                before_handler(current_epoch).await?;
+                last_before_epoch = Some(current_epoch);
             }
             let time_since_epoch_start = now.saturating_sub(current_epoch * epoch_period);
             if time_since_epoch_start >= AFTER_EPOCH_BUFFER && current_epoch > 0 {

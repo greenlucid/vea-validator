@@ -8,11 +8,12 @@ use vea_validator::{
     event_listener::{EventListener, ClaimEvent, SnapshotSentEvent},
     epoch_watcher::EpochWatcher,
     claim_handler::{ClaimHandler, ClaimAction, make_claim},
-    contracts::{IVeaInboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH, IArbSys, IOutbox},
+    contracts::{IVeaInboxArbToEth, IVeaInboxArbToGnosis, IArbSys, IOutbox},
     config::ValidatorConfig,
     proof_relay::{ProofRelay, L2ToL1MessageData},
     startup::{check_rpc_health, check_balances},
 };
+
 fn claim_to_arb_eth(event: &ClaimEvent) -> IVeaInboxArbToEth::Claim {
     IVeaInboxArbToEth::Claim {
         stateRoot: event.state_root,
@@ -24,6 +25,7 @@ fn claim_to_arb_eth(event: &ClaimEvent) -> IVeaInboxArbToEth::Claim {
         challenger: Address::ZERO,
     }
 }
+
 fn claim_to_arb_gnosis(event: &ClaimEvent) -> IVeaInboxArbToGnosis::Claim {
     IVeaInboxArbToGnosis::Claim {
         stateRoot: event.state_root,
@@ -35,6 +37,7 @@ fn claim_to_arb_gnosis(event: &ClaimEvent) -> IVeaInboxArbToGnosis::Claim {
         challenger: Address::ZERO,
     }
 }
+
 async fn handle_claim_action<P: alloy::providers::Provider, F, Fut>(
     handler: &Arc<ClaimHandler<P>>,
     action: ClaimAction,
@@ -73,6 +76,8 @@ async fn handle_claim_action<P: alloy::providers::Provider, F, Fut>(
         }
     }
 }
+
+#[allow(clippy::too_many_arguments)]
 async fn run_validator_for_route<F, Fut>(
     route_name: &str,
     inbox_address: Address,

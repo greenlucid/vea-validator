@@ -20,6 +20,13 @@ pub struct L2ToL1MessageData {
 pub struct ProofRelay {
     pending: Arc<RwLock<HashMap<u64, L2ToL1MessageData>>>,
 }
+
+impl Default for ProofRelay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProofRelay {
     pub fn new() -> Self {
         Self {
