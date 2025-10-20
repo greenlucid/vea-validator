@@ -3,46 +3,62 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::network::{Ethereum, EthereumWallet};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone)]
+pub struct ChainInfo {
+    pub name: String,
+    pub rpc_url: String,
+    pub deposit_token: Option<Address>,
+}
+
+pub struct Route {
+    pub name: &'static str,
+    pub inbox_chain_id: u64,
+    pub inbox_address: Address,
+    pub inbox_rpc: String,
+    pub outbox_chain_id: u64,
+    pub outbox_address: Address,
+    pub outbox_rpc: String,
+}
+
 pub struct ValidatorConfig {
-    pub arbitrum_rpc: String,
-    pub ethereum_rpc: String,
-    pub gnosis_rpc: String,
     pub private_key: String,
+    pub wallet: EthereumWallet,
+    pub wallet_address: Address,
+    pub chains: HashMap<u64, ChainInfo>,
     pub inbox_arb_to_eth: Address,
     pub outbox_arb_to_eth: Address,
     pub inbox_arb_to_gnosis: Address,
     pub outbox_arb_to_gnosis: Address,
-    pub weth_gnosis: Address,
 }
 impl ValidatorConfig {
-    pub fn setup_arb_to_eth(&self) -> Result<
-        Providers<impl Provider + Clone + use<>, impl Provider + Clone + use<>>,
-        Box<dyn std::error::Error + Send + Sync>
-    > {
-        use alloy::signers::local::PrivateKeySigner;
-        let signer = PrivateKeySigner::from_str(&self.private_key)?;
-        let wallet_address = signer.address();
-        let wallet = EthereumWallet::from(signer);
-        let mut providers = setup_providers(self.ethereum_rpc.clone(), self.arbitrum_rpc.clone(), wallet.clone())?;
-        providers.wallet = wallet;
-        providers.wallet_address = wallet_address;
-        Ok(providers)
+    pub fn build_routes(&self) -> Vec<Route> {
+        vec![
+            Route {
+                name: "ARB_TO_ETH",
+                inbox_chain_id: 42161,
+                inbox_address: self.inbox_arb_to_eth,
+                inbox_rpc: self.chains.get(&42161).expect("Arbitrum").rpc_url.clone(),
+                outbox_chain_id: 1,
+                outbox_address: self.outbox_arb_to_eth,
+                outbox_rpc: self.chains.get(&1).expect("Ethereum").rpc_url.clone(),
+            },
+            Route {
+                name: "ARB_TO_GNOSIS",
+                inbox_chain_id: 42161,
+                inbox_address: self.inbox_arb_to_gnosis,
+                inbox_rpc: self.chains.get(&42161).expect("Arbitrum").rpc_url.clone(),
+                outbox_chain_id: 100,
+                outbox_address: self.outbox_arb_to_gnosis,
+                outbox_rpc: self.chains.get(&100).expect("Gnosis").rpc_url.clone(),
+            },
+        ]
     }
-    pub fn setup_arb_to_gnosis(&self) -> Result<
-        Providers<impl Provider + Clone + use<>, impl Provider + Clone + use<>>,
-        Box<dyn std::error::Error + Send + Sync>
-    > {
-        use alloy::signers::local::PrivateKeySigner;
-        let signer = PrivateKeySigner::from_str(&self.private_key)?;
-        let wallet_address = signer.address();
-        let wallet = EthereumWallet::from(signer);
-        let mut providers = setup_providers(self.gnosis_rpc.clone(), self.arbitrum_rpc.clone(), wallet.clone())?;
-        providers.wallet = wallet;
-        providers.wallet_address = wallet_address;
-        Ok(providers)
-    }
+
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         dotenv::dotenv().ok();
+
         let arbitrum_rpc = std::env::var("ARBITRUM_RPC_URL")
             .expect("ARBITRUM_RPC_URL must be set");
         let ethereum_rpc = std::env::var("ETHEREUM_RPC_URL")
@@ -50,10 +66,38 @@ impl ValidatorConfig {
             .expect("ETHEREUM_RPC_URL or MAINNET_RPC_URL must be set");
         let gnosis_rpc = std::env::var("GNOSIS_RPC_URL")
             .expect("GNOSIS_RPC_URL must be set");
+        let weth_gnosis = Address::from_str(
+            &std::env::var("WETH_GNOSIS")
+                .expect("WETH_GNOSIS must be set")
+        )?;
+
         let private_key = std::env::var("PRIVATE_KEY")
             .or_else(|_| std::fs::read_to_string("/run/secrets/validator_key")
                 .map(|s| s.trim().to_string()))
             .expect("PRIVATE_KEY not set or /run/secrets/validator_key not found");
+
+        use alloy::signers::local::PrivateKeySigner;
+        let signer = PrivateKeySigner::from_str(&private_key)?;
+        let wallet_address = signer.address();
+        let wallet = EthereumWallet::from(signer);
+
+        let mut chains = HashMap::new();
+        chains.insert(42161, ChainInfo {
+            name: "Arbitrum".to_string(),
+            rpc_url: arbitrum_rpc,
+            deposit_token: None,
+        });
+        chains.insert(1, ChainInfo {
+            name: "Ethereum".to_string(),
+            rpc_url: ethereum_rpc,
+            deposit_token: None,
+        });
+        chains.insert(100, ChainInfo {
+            name: "Gnosis".to_string(),
+            rpc_url: gnosis_rpc,
+            deposit_token: Some(weth_gnosis),
+        });
+
         let inbox_arb_to_eth = Address::from_str(
             &std::env::var("VEA_INBOX_ARB_TO_ETH")
                 .expect("VEA_INBOX_ARB_TO_ETH must be set")
@@ -70,57 +114,16 @@ impl ValidatorConfig {
             &std::env::var("VEA_OUTBOX_ARB_TO_GNOSIS")
                 .expect("VEA_OUTBOX_ARB_TO_GNOSIS must be set")
         )?;
-        let weth_gnosis = Address::from_str(
-            &std::env::var("WETH_GNOSIS")
-                .expect("WETH_GNOSIS must be set")
-        )?;
+
         Ok(Self {
-            arbitrum_rpc,
-            ethereum_rpc,
-            gnosis_rpc,
             private_key,
+            wallet,
+            wallet_address,
+            chains,
             inbox_arb_to_eth,
             outbox_arb_to_eth,
             inbox_arb_to_gnosis,
             outbox_arb_to_gnosis,
-            weth_gnosis,
         })
     }
-}
-pub struct Providers<P1, P2> {
-    pub destination_provider: Arc<P1>,
-    pub arbitrum_provider: Arc<P1>,
-    pub destination_with_wallet: Arc<P2>,
-    pub arbitrum_with_wallet: Arc<P2>,
-    pub wallet: alloy::network::EthereumWallet,
-    pub wallet_address: Address,
-}
-pub fn setup_providers(
-    destination_rpc: String,
-    arbitrum_rpc: String,
-    wallet: EthereumWallet,
-) -> Result<
-    Providers<impl Provider + Clone + use<>, impl Provider + Clone + use<>>,
-    Box<dyn std::error::Error + Send + Sync>
-> {
-    let destination_provider = ProviderBuilder::new().connect_http(destination_rpc.parse()?);
-    let destination_provider = Arc::new(destination_provider);
-    let arbitrum_provider = ProviderBuilder::new().connect_http(arbitrum_rpc.parse()?);
-    let arbitrum_provider = Arc::new(arbitrum_provider);
-    let destination_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
-        .wallet(wallet.clone())
-        .connect_provider(destination_provider.clone());
-    let destination_with_wallet = Arc::new(destination_with_wallet);
-    let arbitrum_with_wallet = ProviderBuilder::<_, _, Ethereum>::new()
-        .wallet(wallet.clone())
-        .connect_provider(arbitrum_provider.clone());
-    let arbitrum_with_wallet = Arc::new(arbitrum_with_wallet);
-    Ok(Providers {
-        destination_provider,
-        arbitrum_provider,
-        destination_with_wallet,
-        arbitrum_with_wallet,
-        wallet,
-        wallet_address: Address::ZERO,
-    })
 }

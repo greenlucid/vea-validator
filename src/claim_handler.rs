@@ -36,29 +36,32 @@ pub fn make_claim(event: &ClaimEvent) -> IVeaOutboxArbToEth::Claim {
         challenger: Address::ZERO,
     }
 }
-pub struct ClaimHandler<P: Provider> {
-    provider: Arc<P>,
-    inbox_provider: Arc<P>,
-    outbox_address: Address,
+pub struct ClaimHandler {
+    inbox_rpc: String,
+    outbox_rpc: String,
     inbox_address: Address,
+    outbox_address: Address,
+    wallet: alloy::network::EthereumWallet,
     wallet_address: Address,
     weth_address: Option<Address>,
     claims: Arc<RwLock<HashMap<u64, ClaimEvent>>>,
 }
-impl<P: Provider> ClaimHandler<P> {
+impl ClaimHandler {
     pub fn new(
-        provider: Arc<P>,
-        inbox_provider: Arc<P>,
-        outbox_address: Address,
+        inbox_rpc: String,
+        outbox_rpc: String,
         inbox_address: Address,
+        outbox_address: Address,
+        wallet: alloy::network::EthereumWallet,
         wallet_address: Address,
         weth_address: Option<Address>,
     ) -> Self {
         Self {
-            provider,
-            inbox_provider,
-            outbox_address,
+            inbox_rpc,
+            outbox_rpc,
             inbox_address,
+            outbox_address,
+            wallet,
             wallet_address,
             weth_address,
             claims: Arc::new(RwLock::new(HashMap::new())),
@@ -73,7 +76,9 @@ impl<P: Provider> ClaimHandler<P> {
         Ok(claims.get(&epoch).cloned())
     }
     pub async fn get_correct_state_root(&self, epoch: u64) -> Result<FixedBytes<32>, Box<dyn std::error::Error + Send + Sync>> {
-        let inbox = IVeaInboxArbToEth::new(self.inbox_address, self.inbox_provider.clone());
+        use alloy::providers::ProviderBuilder;
+        let provider = Arc::new(ProviderBuilder::new().connect_http(self.inbox_rpc.parse()?));
+        let inbox = IVeaInboxArbToEth::new(self.inbox_address, provider);
         retry_rpc(|| async {
             inbox.snapshots(U256::from(epoch)).call().await
         }).await
@@ -83,7 +88,11 @@ impl<P: Provider> ClaimHandler<P> {
         Ok(claim.state_root == correct_state_root)
     }
     pub async fn submit_claim(&self, epoch: u64, state_root: FixedBytes<32>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
+        use alloy::providers::ProviderBuilder;
+        let provider = Arc::new(ProviderBuilder::new()
+            .wallet(self.wallet.clone())
+            .connect_http(self.outbox_rpc.parse()?));
+        let outbox = IVeaOutboxArbToEth::new(self.outbox_address, provider);
         let deposit = retry_rpc(|| async {
             outbox.deposit().call().await
         }).await?;
@@ -98,12 +107,17 @@ impl<P: Provider> ClaimHandler<P> {
         Ok(())
     }
     pub async fn challenge_claim(&self, epoch: u64, claim: IVeaOutboxArbToEth::Claim) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use alloy::providers::ProviderBuilder;
+        let provider = Arc::new(ProviderBuilder::new()
+            .wallet(self.wallet.clone())
+            .connect_http(self.outbox_rpc.parse()?));
+
         if let Some(weth_addr) = self.weth_address {
-            let outbox_gnosis = IVeaOutboxArbToGnosis::new(self.outbox_address, self.provider.clone());
+            let outbox_gnosis = IVeaOutboxArbToGnosis::new(self.outbox_address, provider.clone());
             let deposit = retry_rpc(|| async {
                 outbox_gnosis.deposit().call().await
             }).await?;
-            let weth = IWETH::new(weth_addr, self.provider.clone());
+            let weth = IWETH::new(weth_addr, provider.clone());
             let current_allowance = retry_rpc(|| async {
                 weth.allowance(self.wallet_address, self.outbox_address).call().await
             }).await?;
@@ -138,7 +152,7 @@ impl<P: Provider> ClaimHandler<P> {
                 return Err("challenge transaction failed".into());
             }
         } else {
-            let outbox = IVeaOutboxArbToEth::new(self.outbox_address, self.provider.clone());
+            let outbox = IVeaOutboxArbToEth::new(self.outbox_address, provider);
             let deposit = retry_rpc(|| async {
                 outbox.deposit().call().await
             }).await?;
@@ -154,7 +168,11 @@ impl<P: Provider> ClaimHandler<P> {
         Ok(())
     }
     pub async fn handle_epoch_end(&self, epoch: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let inbox = IVeaInboxArbToEth::new(self.inbox_address, self.inbox_provider.clone());
+        use alloy::providers::ProviderBuilder;
+        let provider = Arc::new(ProviderBuilder::new()
+            .wallet(self.wallet.clone())
+            .connect_http(self.inbox_rpc.parse()?));
+        let inbox = IVeaInboxArbToEth::new(self.inbox_address, provider);
         let existing_snapshot = retry_rpc(|| async {
             inbox.snapshots(U256::from(epoch)).call().await
         }).await?;

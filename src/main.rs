@@ -77,13 +77,8 @@ async fn handle_claim_action<P: alloy::providers::Provider, F, Fut>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_validator_for_route<F, Fut>(
-    route_name: &str,
-    inbox_address: Address,
-    outbox_address: Address,
-    destination_rpc: String,
-    arbitrum_rpc: String,
+    route: &vea_validator::config::Route,
     wallet: EthereumWallet,
     wallet_address: Address,
     weth_address: Option<Address>,
@@ -93,83 +88,76 @@ where
     F: Fn(u64, ClaimEvent) -> Fut + Send + Sync + Clone + 'static,
     Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send,
 {
-    let providers = vea_validator::config::setup_providers(destination_rpc.clone(), arbitrum_rpc.clone(), wallet)?;
     let claim_handler = Arc::new(ClaimHandler::new(
-        providers.destination_with_wallet.clone(),
-        providers.arbitrum_with_wallet.clone(),
-        outbox_address,
-        inbox_address,
+        route.inbox_rpc.clone(),
+        route.outbox_rpc.clone(),
+        route.inbox_address,
+        route.outbox_address,
+        wallet,
         wallet_address,
         weth_address,
     ));
     let event_listener_outbox = EventListener::new(
-        providers.destination_provider.clone(),
-        outbox_address,
+        route.outbox_rpc.clone(),
+        route.outbox_address,
     );
     let event_listener_inbox = EventListener::new(
-        providers.arbitrum_provider.clone(),
-        inbox_address,
+        route.inbox_rpc.clone(),
+        route.inbox_address,
     );
     let proof_relay = Arc::new(ProofRelay::new());
     let epoch_watcher = EpochWatcher::new(
-        providers.arbitrum_provider.clone(),
+        route.inbox_rpc.clone(),
     );
-    let inbox_contract = IVeaInboxArbToEth::new(inbox_address, providers.arbitrum_provider.clone());
+    let inbox_provider = ProviderBuilder::new().connect_http(route.inbox_rpc.parse()?);
+    let inbox_contract = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider);
     let epoch_period: u64 = inbox_contract.epochPeriod().call().await?.try_into()?;
-    println!("[{}] Starting validator for route", route_name);
-    println!("[{}] Inbox: {:?}, Outbox: {:?}", route_name, inbox_address, outbox_address);
-    let claim_handler_before = claim_handler.clone();
-    let route_before = route_name.to_string();
-    let claim_handler_after = claim_handler.clone();
-    let route_after = route_name.to_string();
+    println!("[{}] Starting validator for route", route.name);
+    println!("[{}] Inbox: {:?}, Outbox: {:?}", route.name, route.inbox_address, route.outbox_address);
+    let claim_handler_for_epochs_before = claim_handler.clone();
+    let claim_handler_for_epochs_after = claim_handler.clone();
     let epoch_handle = tokio::spawn(async move {
         epoch_watcher.watch_epochs(
             epoch_period,
             move |epoch| {
-                let handler = claim_handler_before.clone();
-                let route = route_before.clone();
+                let handler = claim_handler_for_epochs_before.clone();
                 Box::pin(async move {
                     handler.handle_epoch_end(epoch).await
-                        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to save snapshot for epoch {}: {}", route, epoch, e));
+                        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to save snapshot for epoch {}: {}", route.name, epoch, e));
                     Ok(())
                 })
             },
             move |epoch| {
-                let handler = claim_handler_after.clone();
-                let route = route_after.clone();
+                let handler = claim_handler_for_epochs_after.clone();
                 Box::pin(async move {
                     handler.handle_after_epoch_start(epoch).await
-                        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle after epoch start for epoch {}: {}", route, epoch, e));
+                        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle after epoch start for epoch {}: {}", route.name, epoch, e));
                     Ok(())
                 })
             },
         ).await
     });
     let claim_handler_for_claims = claim_handler.clone();
-    let route_claim = route_name.to_string();
-    let bridge_resolver_claim = bridge_resolver.clone();
+    let bridge_resolver_for_claims = bridge_resolver.clone();
     let claim_handle = tokio::spawn(async move {
         event_listener_outbox.watch_claims(move |event: ClaimEvent| {
             let handler = claim_handler_for_claims.clone();
-            let route = route_claim.clone();
-            let resolver = bridge_resolver_claim.clone();
+            let resolver = bridge_resolver_for_claims.clone();
             Box::pin(async move {
-                println!("[{}] Claim detected for epoch {} by {}", route, event.epoch, event.claimer);
+                println!("[{}] Claim detected for epoch {} by {}", route.name, event.epoch, event.claimer);
                 let action = handler.handle_claim_event(event.clone()).await
-                    .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle claim event for epoch {}: {}", route, event.epoch, e));
-                handle_claim_action(&handler, action, &route, &resolver).await;
+                    .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle claim event for epoch {}: {}", route.name, event.epoch, e));
+                handle_claim_action(&handler, action, route.name, &resolver).await;
                 Ok(())
             })
         }).await
     });
-    let proof_relay_for_snapshot_sent = proof_relay.clone();
-    let route_snapshot_sent = route_name.to_string();
+    let proof_relay_for_snapshot = proof_relay.clone();
     let snapshot_sent_handle = tokio::spawn(async move {
         event_listener_inbox.watch_snapshot_sent(move |event: SnapshotSentEvent| {
-            let relay = proof_relay_for_snapshot_sent.clone();
-            let route = route_snapshot_sent.clone();
+            let relay = proof_relay_for_snapshot.clone();
             Box::pin(async move {
-                println!("[{}] SnapshotSent for epoch {} with ticketID {:?}", route, event.epoch, event.ticket_id);
+                println!("[{}] SnapshotSent for epoch {} with ticketID {:?}", route.name, event.epoch, event.ticket_id);
                 let msg_data = L2ToL1MessageData {
                     ticket_id: event.ticket_id,
                     position: event.position,
@@ -187,28 +175,30 @@ where
             })
         }).await
     });
-    let route_relay = route_name.to_string();
-    let arb_prov_relay = providers.arbitrum_provider.clone();
-    let dest_prov_relay = providers.destination_with_wallet.clone();
-    let outbox_relay = outbox_address;
+    let inbox_rpc_for_relay = route.inbox_rpc.clone();
+    let outbox_rpc_for_relay = route.outbox_rpc.clone();
+    let outbox_address_for_relay = route.outbox_address;
+    let wallet_for_relay = wallet.clone();
     let relay_handle = tokio::spawn(async move {
         proof_relay.watch_and_relay(move |epoch, msg_data| {
-            let route = route_relay.clone();
-            let arb_prov = arb_prov_relay.clone();
-            let dest_prov = dest_prov_relay.clone();
+            let inbox_rpc = inbox_rpc_for_relay.clone();
+            let outbox_rpc = outbox_rpc_for_relay.clone();
+            let wlt = wallet_for_relay.clone();
             Box::pin(async move {
-                println!("[{}] Executing proof relay for epoch {}", route, epoch);
-                let arb_sys = IArbSys::new(Address::from_slice(&[0u8; 19].iter().chain(&[0x64u8]).copied().collect::<Vec<u8>>()), arb_prov.clone());
+                println!("[{}] Executing proof relay for epoch {}", route.name, epoch);
+                let inbox_provider = ProviderBuilder::new().connect_http(inbox_rpc.parse()?);
+                let arb_sys = IArbSys::new(Address::from_slice(&[0u8; 19].iter().chain(&[0x64u8]).copied().collect::<Vec<u8>>()), inbox_provider);
                 let merkle_state = arb_sys.sendMerkleTreeState().call().await.map_err(|e| format!("Failed to get merkle state: {}", e))?;
                 let size = merkle_state.size;
                 let node_interface_addr = Address::from_slice(&[0u8; 19].iter().chain(&[0xC8u8]).copied().collect::<Vec<u8>>());
                 let proof_bytes = {
                     use alloy::rpc::types::TransactionRequest;
                     use alloy::primitives::Bytes;
+                    let inbox_provider = ProviderBuilder::new().connect_http(inbox_rpc.parse()?);
                     let mut call_data = vec![0x42, 0x69, 0x6c, 0x6c];
                     call_data.extend_from_slice(&size.to_be_bytes::<32>());
                     call_data.extend_from_slice(&msg_data.position.to_be_bytes::<32>());
-                    let result = arb_prov.call(TransactionRequest::default()
+                    let result = inbox_provider.call(TransactionRequest::default()
                         .to(node_interface_addr)
                         .input(Bytes::from(call_data).into())).await.map_err(|e| format!("NodeInterface call failed: {}", e))?;
                     result
@@ -230,7 +220,8 @@ where
                     }
                     proof.push(FixedBytes::<32>::from_slice(&proof_bytes[offset..offset + 32]));
                 }
-                let outbox = IOutbox::new(outbox_relay, dest_prov);
+                let outbox_provider = ProviderBuilder::new().wallet(wlt).connect_http(outbox_rpc.parse()?);
+                let outbox = IOutbox::new(outbox_address_for_relay, outbox_provider);
                 let tx = outbox.executeTransaction(
                     proof,
                     msg_data.position,
@@ -246,16 +237,16 @@ where
                 if !receipt.status() {
                     return Err(format!("executeTransaction failed for epoch {}", epoch).into());
                 }
-                println!("[{}] Proof relay executed successfully for epoch {}", route, epoch);
+                println!("[{}] Proof relay executed successfully for epoch {}", route.name, epoch);
                 Ok(())
             })
         }).await
     });
     tokio::select! {
-        _ = epoch_handle => println!("[{}] Epoch watcher stopped", route_name),
-        _ = claim_handle => println!("[{}] Claim watcher stopped", route_name),
-        _ = snapshot_sent_handle => println!("[{}] SnapshotSent watcher stopped", route_name),
-        _ = relay_handle => println!("[{}] Proof relay stopped", route_name),
+        _ = epoch_handle => println!("[{}] Epoch watcher stopped", route.name),
+        _ = claim_handle => println!("[{}] Claim watcher stopped", route.name),
+        _ = snapshot_sent_handle => println!("[{}] SnapshotSent watcher stopped", route.name),
+        _ = relay_handle => println!("[{}] Proof relay stopped", route.name),
     }
     Ok(())
 }
@@ -268,10 +259,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Validator wallet address: {}", wallet_address);
     check_rpc_health(&c).await?;
     check_balances(&c, wallet_address).await?;
+    let routes = c.build_routes();
+    let arb_to_eth_route = &routes[0];
+    let arb_to_gnosis_route = &routes[1];
+
     let arb_to_eth_resolver = {
-        let rpc = c.arbitrum_rpc.clone();
+        let rpc = arb_to_eth_route.inbox_rpc.clone();
         let wlt = wallet.clone();
-        let inbox = c.inbox_arb_to_eth;
+        let inbox = arb_to_eth_route.inbox_address;
         let wlt_addr = wallet_address;
         move |epoch: u64, claim: ClaimEvent| {
             let rpc = rpc.clone();
@@ -281,7 +276,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let provider = ProviderBuilder::<_, _, Ethereum>::new()
                     .wallet(wlt)
                     .connect_http(rpc.parse()?);
-                let provider = Arc::new(provider);
                 let inbox_contract = IVeaInboxArbToEth::new(inbox, provider);
                 let tx = inbox_contract.sendSnapshot(U256::from(epoch), claim_to_arb_eth(&claim))
                     .from(wlt_addr);
@@ -296,9 +290,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
     let arb_to_gnosis_resolver = {
-        let rpc = c.arbitrum_rpc.clone();
+        let rpc = arb_to_gnosis_route.inbox_rpc.clone();
         let wlt = wallet.clone();
-        let inbox = c.inbox_arb_to_gnosis;
+        let inbox = arb_to_gnosis_route.inbox_address;
         let wlt_addr = wallet_address;
         move |epoch: u64, claim: ClaimEvent| {
             let rpc = rpc.clone();
@@ -308,7 +302,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let provider = ProviderBuilder::<_, _, Ethereum>::new()
                     .wallet(wlt)
                     .connect_http(rpc.parse()?);
-                let provider = Arc::new(provider);
                 let inbox_contract = IVeaInboxArbToGnosis::new(inbox, provider);
                 let gas_limit = U256::from(2_000_000u64);
                 let tx = inbox_contract.sendSnapshot(U256::from(epoch), gas_limit, claim_to_arb_gnosis(&claim))
@@ -324,25 +317,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
     let arb_to_eth_handle = tokio::spawn(run_validator_for_route(
-        "ARB_TO_ETH",
-        c.inbox_arb_to_eth,
-        c.outbox_arb_to_eth,
-        c.ethereum_rpc.clone(),
-        c.arbitrum_rpc.clone(),
+        arb_to_eth_route,
         wallet.clone(),
         wallet_address,
         None,
         arb_to_eth_resolver,
     ));
     let arb_to_gnosis_handle = tokio::spawn(run_validator_for_route(
-        "ARB_TO_GNOSIS",
-        c.inbox_arb_to_gnosis,
-        c.outbox_arb_to_gnosis,
-        c.gnosis_rpc,
-        c.arbitrum_rpc,
+        arb_to_gnosis_route,
         wallet.clone(),
         wallet_address,
-        Some(c.weth_gnosis),
+        c.chains.get(&100).expect("Gnosis").deposit_token,
         arb_to_gnosis_resolver,
     ));
     println!("Running validators for both ARB_TO_ETH and ARB_TO_GNOSIS routes simultaneously...");
