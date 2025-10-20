@@ -1,8 +1,6 @@
 use alloy::primitives::Address;
-use alloy::providers::{Provider, ProviderBuilder};
-use alloy::network::{Ethereum, EthereumWallet};
+use alloy::network::EthereumWallet;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

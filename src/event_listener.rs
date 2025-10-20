@@ -3,7 +3,6 @@ use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
 use alloy::primitives::keccak256;
 use futures_util::StreamExt;
-use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 #[derive(Debug, Clone)]
 pub struct ClaimEvent {

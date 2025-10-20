@@ -1,8 +1,5 @@
-use alloy::primitives::{Address, U256};
+use alloy::primitives::U256;
 use alloy::providers::{ProviderBuilder, Provider};
-use alloy::signers::local::PrivateKeySigner;
-use alloy::network::EthereumWallet;
-use std::str::FromStr;
 use crate::contracts::{IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
 use crate::config::ValidatorConfig;
 

@@ -1,5 +1,4 @@
 use alloy::primitives::{Address, FixedBytes, U256};
-use alloy::providers::Provider;
 use crate::event_listener::ClaimEvent;
 use crate::contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
 use std::sync::Arc;
