@@ -25,8 +25,8 @@ async fn test_event_listener_reconnects_on_stream_end() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
 
@@ -53,7 +53,7 @@ async fn test_event_listener_reconnects_on_stream_end() {
         advance_time(outbox_provider.as_ref(), advance_amount).await;
     }
 
-    let event_listener = EventListener::new(route.outbox_rpc.clone(), route.outbox_address);
+    let event_listener = EventListener::new(route.outbox_provider.clone(), route.outbox_address);
     let events_received = Arc::new(AtomicU64::new(0));
     let events_flag = events_received.clone();
 
@@ -134,8 +134,8 @@ async fn test_event_listener_handles_malformed_events() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
 
@@ -161,7 +161,7 @@ async fn test_event_listener_handles_malformed_events() {
         advance_time(outbox_provider.as_ref(), advance_amount).await;
     }
 
-    let event_listener = EventListener::new(route.outbox_rpc.clone(), route.outbox_address);
+    let event_listener = EventListener::new(route.outbox_provider.clone(), route.outbox_address);
     let listener_is_running = Arc::new(AtomicU64::new(0));
     let listener_flag = listener_is_running.clone();
 

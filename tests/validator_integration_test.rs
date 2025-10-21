@@ -28,8 +28,8 @@ async fn test_validator_detects_and_challenges_wrong_claim() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
@@ -75,7 +75,7 @@ async fn test_validator_detects_and_challenges_wrong_claim() {
     println!("\n--- Starting Validator Components ---");
     let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.clone()));
 
-    let event_listener = EventListener::new(route.outbox_rpc.clone(), route.outbox_address);
+    let event_listener = EventListener::new(route.outbox_provider.clone(), route.outbox_address);
 
     let challenge_detected = Arc::new(AtomicBool::new(false));
     let challenge_flag = challenge_detected.clone();
@@ -161,8 +161,8 @@ async fn test_validator_triggers_bridge_resolution() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
@@ -207,27 +207,20 @@ async fn test_validator_triggers_bridge_resolution() {
 
     println!("\n--- Creating Bridge Resolver (from main.rs) ---");
     let wallet_address = c.wallet.default_signer().address();
-    let inbox_rpc = route.inbox_rpc.clone();
+    let inbox_provider_clone = route.inbox_provider.clone();
     let inbox_addr = route.inbox_address;
-    let wallet_clone = c.wallet.clone();
 
     let bridge_resolver_called = Arc::new(AtomicBool::new(false));
     let bridge_flag = bridge_resolver_called.clone();
 
     let bridge_resolver = move |epoch: u64, claim: ClaimEvent| {
-        let rpc = inbox_rpc.clone();
-        let wlt = wallet_clone.clone();
+        let provider = inbox_provider_clone.clone();
         let inbox = inbox_addr;
         let wlt_addr = wallet_address;
         let flag = bridge_flag.clone();
 
         async move {
             println!("🌉 Bridge resolver triggered for epoch {}!", epoch);
-
-            let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                .wallet(wlt)
-                .connect_http(rpc.parse()?);
-            let provider = Arc::new(provider);
 
             let inbox_contract = IVeaInboxArbToEth::new(inbox, provider);
 
@@ -259,7 +252,7 @@ async fn test_validator_triggers_bridge_resolution() {
 
     let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.clone()));
 
-    let event_listener = EventListener::new(route.outbox_rpc.clone(), route.outbox_address);
+    let event_listener = EventListener::new(route.outbox_provider.clone(), route.outbox_address);
 
     let claim_handler_clone = claim_handler.clone();
     let resolver = bridge_resolver.clone();
@@ -341,8 +334,8 @@ async fn test_validator_detects_and_challenges_wrong_claim_arb_to_gnosis() {
     let routes = c.build_routes();
     let route = &routes[1];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
@@ -397,7 +390,7 @@ async fn test_validator_detects_and_challenges_wrong_claim_arb_to_gnosis() {
     println!("\n--- Starting Validator Components ---");
     let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.clone()));
 
-    let event_listener = EventListener::new(route.outbox_rpc.clone(), route.outbox_address);
+    let event_listener = EventListener::new(route.outbox_provider.clone(), route.outbox_address);
 
     let challenge_detected = Arc::new(AtomicBool::new(false));
     let challenge_flag = challenge_detected.clone();
@@ -482,11 +475,10 @@ async fn test_epoch_watcher_before_buffer_triggers_save_snapshot() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let inbox_provider_read = Arc::new(ProviderBuilder::new().connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider_read = Arc::new(ProviderBuilder::new().connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider_read.clone(), inbox_provider_read.clone());
+    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
@@ -509,7 +501,7 @@ async fn test_epoch_watcher_before_buffer_triggers_save_snapshot() {
 
     let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.clone()));
 
-    let epoch_watcher = EpochWatcher::new(route.inbox_rpc.clone());
+    let epoch_watcher = EpochWatcher::new(route.inbox_provider.clone());
 
     let snapshot_saved = Arc::new(AtomicBool::new(false));
     let snapshot_flag = snapshot_saved.clone();
@@ -574,8 +566,8 @@ async fn test_epoch_watcher_after_buffer_triggers_claim() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
@@ -614,7 +606,7 @@ async fn test_epoch_watcher_after_buffer_triggers_claim() {
 
     let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.clone()));
 
-    let epoch_watcher = EpochWatcher::new(route.inbox_rpc.clone());
+    let epoch_watcher = EpochWatcher::new(route.inbox_provider.clone());
 
     let claim_submitted = Arc::new(AtomicBool::new(false));
     let claim_flag = claim_submitted.clone();
@@ -673,11 +665,10 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let inbox_provider_read = Arc::new(ProviderBuilder::new().connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider_read = Arc::new(ProviderBuilder::new().connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider_read.clone(), inbox_provider_read.clone());
+    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
@@ -699,7 +690,7 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
 
     let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.clone()));
 
-    let epoch_watcher = EpochWatcher::new(route.inbox_rpc.clone());
+    let epoch_watcher = EpochWatcher::new(route.inbox_provider.clone());
 
     let save_called = Arc::new(AtomicBool::new(false));
     let save_flag = save_called.clone();
@@ -755,8 +746,8 @@ async fn test_race_condition_claim_already_made() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
@@ -831,8 +822,8 @@ async fn test_race_condition_challenge_already_made() {
     let routes = c.build_routes();
     let route = &routes[0];
 
-    let inbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.inbox_rpc.parse().unwrap()));
-    let outbox_provider = Arc::new(ProviderBuilder::new().wallet(c.wallet.clone()).connect_http(route.outbox_rpc.parse().unwrap()));
+    let inbox_provider = Arc::new(route.inbox_provider.clone());
+    let outbox_provider = Arc::new(route.outbox_provider.clone());
 
     let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
     fixture.take_snapshots().await.unwrap();
@@ -867,7 +858,7 @@ async fn test_race_condition_challenge_already_made() {
         advance_time(outbox_provider.as_ref(), advance_amount).await;
     }
 
-    let event_listener = EventListener::new(route.outbox_rpc.clone(), route.outbox_address);
+    let event_listener = EventListener::new(route.outbox_provider.clone(), route.outbox_address);
 
     let claim_event_captured = Arc::new(tokio::sync::RwLock::new(None::<ClaimEvent>));
     let claim_event_flag = claim_event_captured.clone();
