@@ -39,6 +39,7 @@ async fn test_challenge_uses_correct_root_from_inbox() {
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
     let correct_root = inbox.snapshots(U256::from(current_epoch)).call().await.unwrap();
     assert_ne!(correct_root, FixedBytes::<32>::ZERO, "Snapshot should be saved");
+    println!("Saved snapshot for epoch {}", current_epoch);
 
     advance_time(inbox_provider.as_ref(), epoch_period + 70).await;
     advance_time(outbox_provider.as_ref(), epoch_period + 70).await;
@@ -48,8 +49,17 @@ async fn test_challenge_uses_correct_root_from_inbox() {
     let dest_timestamp = dest_block.header.timestamp;
     let target_timestamp = (target_epoch + 1) * epoch_period + 70;
     let advance_amount = target_timestamp.saturating_sub(dest_timestamp);
+    println!("target_epoch={}, dest_timestamp={}, target_timestamp={}, advance_amount={}", target_epoch, dest_timestamp, target_timestamp, advance_amount);
+    println!("epoch_period={}", epoch_period);
+    println!("Contract expects: epoch == block.timestamp / epochPeriod - 1");
+    println!("So for epoch {}, need timestamp >= {}", target_epoch, (target_epoch + 1) * epoch_period);
+    println!("Current outbox timestamp: {}", dest_timestamp);
+    println!("Calculated claimable epoch from timestamp: {}", dest_timestamp / epoch_period - 1);
     if advance_amount > 0 {
         advance_time(outbox_provider.as_ref(), advance_amount).await;
+        let after_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
+        println!("After advance, outbox timestamp: {}", after_block.header.timestamp);
+        println!("After advance, claimable epoch: {}", after_block.header.timestamp / epoch_period - 1);
     }
 
     let wrong_root = FixedBytes::<32>::from([0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
