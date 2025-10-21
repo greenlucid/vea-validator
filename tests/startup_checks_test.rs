@@ -8,7 +8,8 @@ use alloy::providers::Provider;
 async fn test_startup_fails_with_bad_arbitrum_rpc() {
     let mut c = ValidatorConfig::from_env().unwrap();
     c.chains.get_mut(&42161).unwrap().rpc_url = "http://localhost:9999".into();
-    vea_validator::startup::check_rpc_health(&c).await.unwrap();
+    let routes = c.build_routes();
+    vea_validator::startup::check_rpc_health(&routes).await.unwrap();
 }
 
 #[tokio::test]
@@ -17,7 +18,8 @@ async fn test_startup_fails_with_bad_arbitrum_rpc() {
 async fn test_startup_fails_with_bad_ethereum_rpc() {
     let mut c = ValidatorConfig::from_env().unwrap();
     c.chains.get_mut(&1).unwrap().rpc_url = "http://localhost:9998".into();
-    vea_validator::startup::check_rpc_health(&c).await.unwrap();
+    let routes = c.build_routes();
+    vea_validator::startup::check_rpc_health(&routes).await.unwrap();
 }
 
 #[tokio::test]
@@ -26,7 +28,8 @@ async fn test_startup_fails_with_bad_ethereum_rpc() {
 async fn test_startup_fails_with_bad_gnosis_rpc() {
     let mut c = ValidatorConfig::from_env().unwrap();
     c.chains.get_mut(&100).unwrap().rpc_url = "http://localhost:9997".into();
-    vea_validator::startup::check_rpc_health(&c).await.unwrap();
+    let routes = c.build_routes();
+    vea_validator::startup::check_rpc_health(&routes).await.unwrap();
 }
 
 #[tokio::test]
@@ -37,7 +40,8 @@ async fn test_startup_fails_with_insufficient_eth_balance() {
     let mut c = ValidatorConfig::from_env().unwrap();
     let broke_signer = PrivateKeySigner::from_slice(&[1u8; 32]).unwrap();
     c.wallet = alloy::network::EthereumWallet::from(broke_signer);
-    vea_validator::startup::check_balances(&c).await.unwrap();
+    let routes = c.build_routes();
+    vea_validator::startup::check_balances(&c, &routes).await.unwrap();
 }
 
 #[tokio::test]
@@ -59,5 +63,6 @@ async fn test_startup_fails_with_insufficient_weth_balance() {
     eth_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     c.wallet = alloy::network::EthereumWallet::from(test_signer);
-    vea_validator::startup::check_balances(&c).await.unwrap();
+    let routes = c.build_routes();
+    vea_validator::startup::check_balances(&c, &routes).await.unwrap();
 }

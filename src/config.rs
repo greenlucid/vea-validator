@@ -38,18 +38,21 @@ impl ValidatorConfig {
         let eth_rpc = &self.chains.get(&1).expect("Ethereum").rpc_url;
         let gnosis_rpc = &self.chains.get(&100).expect("Gnosis").rpc_url;
 
-        let arb_provider = ProviderBuilder::new()
-            .wallet(self.wallet.clone())
-            .on_http(arb_rpc.parse().expect("Invalid Arbitrum RPC URL"))
-            .into();
-        let eth_provider = ProviderBuilder::new()
-            .wallet(self.wallet.clone())
-            .on_http(eth_rpc.parse().expect("Invalid Ethereum RPC URL"))
-            .into();
-        let gnosis_provider = ProviderBuilder::new()
-            .wallet(self.wallet.clone())
-            .on_http(gnosis_rpc.parse().expect("Invalid Gnosis RPC URL"))
-            .into();
+        let arb_provider = DynProvider::new(
+            ProviderBuilder::new()
+                .wallet(self.wallet.clone())
+                .connect_http(arb_rpc.parse().expect("Invalid Arbitrum RPC URL"))
+        );
+        let eth_provider = DynProvider::new(
+            ProviderBuilder::new()
+                .wallet(self.wallet.clone())
+                .connect_http(eth_rpc.parse().expect("Invalid Ethereum RPC URL"))
+        );
+        let gnosis_provider = DynProvider::new(
+            ProviderBuilder::new()
+                .wallet(self.wallet.clone())
+                .connect_http(gnosis_rpc.parse().expect("Invalid Gnosis RPC URL"))
+        );
 
         vec![
             Route {

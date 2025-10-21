@@ -1,8 +1,8 @@
 use alloy::primitives::U256;
-use alloy::providers::Provider;
+use alloy::providers::{Provider, DynProvider};
+use alloy::network::Ethereum;
 use crate::contracts::{IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
 use crate::config::{ValidatorConfig, Route};
-use std::sync::Arc;
 
 pub async fn check_rpc_health(routes: &[Route]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Checking RPC endpoint health...");
@@ -52,7 +52,7 @@ pub async fn check_balances(c: &ValidatorConfig, routes: &[Route]) -> Result<(),
     Ok(())
 }
 
-pub async fn ensure_weth_approval(c: &ValidatorConfig, gnosis_provider: Arc<dyn Provider + Send + Sync>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn ensure_weth_approval(c: &ValidatorConfig, gnosis_provider: DynProvider<Ethereum>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let wallet = c.wallet.default_signer().address();
     let weth_addr = c.chains.get(&100).expect("Gnosis").deposit_token
         .expect("Gnosis should use WETH");

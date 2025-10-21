@@ -1,10 +1,10 @@
 use alloy::primitives::{Address, FixedBytes, U256};
-use alloy::providers::Provider;
+use alloy::providers::{Provider, DynProvider};
+use alloy::network::Ethereum;
 use alloy::rpc::types::Filter;
 use alloy::primitives::keccak256;
 use futures_util::StreamExt;
 use tokio::time::{sleep, Duration};
-use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct ClaimEvent {
@@ -28,11 +28,11 @@ pub struct SnapshotSentEvent {
     pub data: Vec<u8>,
 }
 pub struct EventListener {
-    provider: Arc<dyn Provider + Send + Sync>,
+    provider: DynProvider<Ethereum>,
     contract_address: Address,
 }
 impl EventListener {
-    pub fn new(provider: Arc<dyn Provider + Send + Sync>, contract_address: Address) -> Self {
+    pub fn new(provider: DynProvider<Ethereum>, contract_address: Address) -> Self {
         Self {
             provider,
             contract_address,

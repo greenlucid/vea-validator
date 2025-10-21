@@ -1,14 +1,14 @@
-use alloy::providers::Provider;
+use alloy::providers::{Provider, DynProvider};
+use alloy::network::Ethereum;
 use tokio::time::{sleep, Duration};
-use std::sync::Arc;
 
 const BEFORE_EPOCH_BUFFER: u64 = 300;
 const AFTER_EPOCH_BUFFER: u64 = 60;
 pub struct EpochWatcher {
-    provider: Arc<dyn Provider + Send + Sync>,
+    provider: DynProvider<Ethereum>,
 }
 impl EpochWatcher {
-    pub fn new(provider: Arc<dyn Provider + Send + Sync>) -> Self {
+    pub fn new(provider: DynProvider<Ethereum>) -> Self {
         Self { provider }
     }
     async fn get_current_timestamp(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
