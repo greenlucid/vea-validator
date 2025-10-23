@@ -6,7 +6,7 @@ use std::sync::Arc;
 use vea_validator::{
     event_listener::{EventListener, ClaimEvent, SnapshotSentEvent},
     epoch_watcher::EpochWatcher,
-    claim_handler::{ClaimHandler, make_claim, make_inbox_claim_arb_to_eth, make_inbox_claim_arb_to_gnosis},
+    claim_handler::{ClaimHandler, make_claim},
     contracts::{IVeaInboxArbToEth, IVeaInboxArbToGnosis},
     config::ValidatorConfig,
     proof_relay::{ProofRelay, L2ToL1MessageData},
@@ -162,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             async move {
                 println!("[ARB_TO_ETH] Triggering bridge resolution for epoch {}", epoch);
                 let inbox_contract = IVeaInboxArbToEth::new(inbox, provider);
-                let tx = inbox_contract.sendSnapshot(U256::from(epoch), make_inbox_claim_arb_to_eth(&claim))
+                let tx = inbox_contract.sendSnapshot(U256::from(epoch), make_claim(&claim))
                     .from(wlt.default_signer().address());
                 let tx_result = tx.send().await?;
                 let receipt = tx_result.get_receipt().await?;
@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("[ARB_TO_GNOSIS] Triggering bridge resolution for epoch {}", epoch);
                 let inbox_contract = IVeaInboxArbToGnosis::new(inbox, provider);
                 let gas_limit = U256::from(2_000_000u64);
-                let tx = inbox_contract.sendSnapshot(U256::from(epoch), gas_limit, make_inbox_claim_arb_to_gnosis(&claim))
+                let tx = inbox_contract.sendSnapshot(U256::from(epoch), gas_limit, make_claim(&claim))
                     .from(wlt.default_signer().address());
                 let tx_result = tx.send().await?;
                 let receipt = tx_result.get_receipt().await?;

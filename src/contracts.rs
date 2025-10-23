@@ -4,6 +4,24 @@ use alloy::sol;
 
 sol! {
     #[derive(Debug)]
+    struct Claim {
+        bytes32 stateRoot;
+        address claimer;
+        uint32 timestampClaimed;
+        uint32 timestampVerification;
+        uint32 blocknumberVerification;
+        Party honest;
+        address challenger;
+    }
+
+    #[derive(Debug)]
+    enum Party {
+        None,
+        Claimer,
+        Challenger
+    }
+
+    #[derive(Debug)]
     #[sol(rpc)]
     interface IVeaInboxArbToEth {
         event MessageSent(bytes _nodeData);
@@ -18,43 +36,11 @@ sol! {
         function epochNow() external view returns (uint256);
         function epochFinalized() external view returns (uint256);
         function sendSnapshot(uint256 _epoch, Claim memory _claim) external;
-
-        struct Claim {
-            bytes32 stateRoot;
-            address claimer;
-            uint32 timestampClaimed;
-            uint32 timestampVerification;
-            uint32 blocknumberVerification;
-            Party honest;
-            address challenger;
-        }
-
-        enum Party {
-            None,
-            Claimer,
-            Challenger
-        }
     }
 
     #[derive(Debug)]
     #[sol(rpc)]
     interface IVeaOutboxArbToEth {
-        struct Claim {
-            bytes32 stateRoot;
-            address claimer;
-            uint32 timestampClaimed;
-            uint32 timestampVerification;
-            uint32 blocknumberVerification;
-            Party honest;
-            address challenger;
-        }
-
-        enum Party {
-            None,
-            Claimer,
-            Challenger
-        }
-
         event Claimed(address indexed _claimer, uint256 indexed _epoch, bytes32 indexed _stateRoot);
         event Challenged(uint256 indexed _epoch, address indexed _challenger);
         event MessageRelayed(uint64 _msgId);
@@ -87,43 +73,11 @@ sol! {
         function epochNow() external view returns (uint256);
         function epochFinalized() external view returns (uint256);
         function sendSnapshot(uint256 _epoch, uint256 _gasLimit, Claim memory _claim) external;
-
-        struct Claim {
-            bytes32 stateRoot;
-            address claimer;
-            uint32 timestampClaimed;
-            uint32 timestampVerification;
-            uint32 blocknumberVerification;
-            Party honest;
-            address challenger;
-        }
-
-        enum Party {
-            None,
-            Claimer,
-            Challenger
-        }
     }
 
     #[derive(Debug)]
     #[sol(rpc)]
     interface IVeaOutboxArbToGnosis {
-        struct Claim {
-            bytes32 stateRoot;
-            address claimer;
-            uint32 timestampClaimed;
-            uint32 timestampVerification;
-            uint32 blocknumberVerification;
-            Party honest;
-            address challenger;
-        }
-
-        enum Party {
-            None,
-            Claimer,
-            Challenger
-        }
-
         event Claimed(address indexed _claimer, uint256 indexed _epoch, bytes32 indexed _stateRoot);
         event Challenged(uint256 indexed _epoch, address indexed _challenger);
         event MessageRelayed(uint64 _msgId);
@@ -180,6 +134,3 @@ sol! {
         ) external;
     }
 }
-
-pub type Claim = IVeaOutboxArbToEth::Claim;
-pub type Party = IVeaOutboxArbToEth::Party;

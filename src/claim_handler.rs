@@ -1,6 +1,6 @@
 use alloy::primitives::{Address, FixedBytes, U256};
 use crate::event_listener::ClaimEvent;
-use crate::contracts::{IVeaInboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
+use crate::contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH, Claim, Party};
 use crate::config::Route;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -25,38 +25,15 @@ where
     }
     unreachable!()
 }
-pub fn make_claim(event: &ClaimEvent) -> IVeaOutboxArbToEth::Claim {
-    IVeaOutboxArbToEth::Claim {
+#[inline]
+pub fn make_claim(event: &ClaimEvent) -> Claim {
+    Claim {
         stateRoot: event.state_root,
         claimer: event.claimer,
         timestampClaimed: event.timestamp_claimed,
         timestampVerification: 0,
         blocknumberVerification: 0,
-        honest: IVeaOutboxArbToEth::Party::None,
-        challenger: Address::ZERO,
-    }
-}
-
-pub fn make_inbox_claim_arb_to_eth(event: &ClaimEvent) -> IVeaInboxArbToEth::Claim {
-    IVeaInboxArbToEth::Claim {
-        stateRoot: event.state_root,
-        claimer: event.claimer,
-        timestampClaimed: event.timestamp_claimed,
-        timestampVerification: 0,
-        blocknumberVerification: 0,
-        honest: IVeaInboxArbToEth::Party::None,
-        challenger: Address::ZERO,
-    }
-}
-
-pub fn make_inbox_claim_arb_to_gnosis(event: &ClaimEvent) -> IVeaInboxArbToGnosis::Claim {
-    IVeaInboxArbToGnosis::Claim {
-        stateRoot: event.state_root,
-        claimer: event.claimer,
-        timestampClaimed: event.timestamp_claimed,
-        timestampVerification: 0,
-        blocknumberVerification: 0,
-        honest: IVeaInboxArbToGnosis::Party::None,
+        honest: Party::None,
         challenger: Address::ZERO,
     }
 }
@@ -115,7 +92,7 @@ impl ClaimHandler {
         }
         Ok(())
     }
-    pub async fn challenge_claim(&self, epoch: u64, claim: IVeaOutboxArbToEth::Claim) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn challenge_claim(&self, epoch: u64, claim: Claim) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(weth_addr) = self.route.weth_address {
             let outbox_gnosis = IVeaOutboxArbToGnosis::new(self.route.outbox_address, self.route.outbox_provider.clone());
             let deposit = retry_rpc(|| async {
@@ -135,21 +112,7 @@ impl ClaimHandler {
                     return Err("WETH approval failed".into());
                 }
             }
-            let gnosis_claim = IVeaOutboxArbToGnosis::Claim {
-                stateRoot: claim.stateRoot,
-                claimer: claim.claimer,
-                timestampClaimed: claim.timestampClaimed,
-                timestampVerification: claim.timestampVerification,
-                blocknumberVerification: claim.blocknumberVerification,
-                honest: match claim.honest {
-                    IVeaOutboxArbToEth::Party::None => IVeaOutboxArbToGnosis::Party::None,
-                    IVeaOutboxArbToEth::Party::Claimer => IVeaOutboxArbToGnosis::Party::Claimer,
-                    IVeaOutboxArbToEth::Party::Challenger => IVeaOutboxArbToGnosis::Party::Challenger,
-                    _ => return Err("Invalid party type".into()),
-                },
-                challenger: claim.challenger,
-            };
-            let tx = outbox_gnosis.challenge(U256::from(epoch), gnosis_claim)
+            let tx = outbox_gnosis.challenge(U256::from(epoch), claim)
                 .from(wallet_address);
             let pending = match tx.send().await {
                 Ok(p) => p,
