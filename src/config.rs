@@ -9,6 +9,7 @@ pub struct ChainInfo {
     pub name: String,
     pub rpc_url: String,
     pub deposit_token: Option<Address>,
+    pub avg_block_millis: u32,
 }
 
 #[derive(Clone)]
@@ -17,6 +18,7 @@ pub struct Route {
     pub inbox_chain_id: u64,
     pub inbox_address: Address,
     pub inbox_provider: DynProvider<Ethereum>,
+    pub inbox_avg_block_millis: u32,
     pub outbox_chain_id: u64,
     pub outbox_address: Address,
     pub outbox_provider: DynProvider<Ethereum>,
@@ -60,6 +62,7 @@ impl ValidatorConfig {
                 inbox_chain_id: 42161,
                 inbox_address: self.inbox_arb_to_eth,
                 inbox_provider: arb_provider.clone(),
+                inbox_avg_block_millis: 250,
                 outbox_chain_id: 1,
                 outbox_address: self.outbox_arb_to_eth,
                 outbox_provider: eth_provider.clone(),
@@ -70,6 +73,7 @@ impl ValidatorConfig {
                 inbox_chain_id: 42161,
                 inbox_address: self.inbox_arb_to_gnosis,
                 inbox_provider: arb_provider.clone(),
+                inbox_avg_block_millis: 250,
                 outbox_chain_id: 100,
                 outbox_address: self.outbox_arb_to_gnosis,
                 outbox_provider: gnosis_provider.clone(),
@@ -107,16 +111,19 @@ impl ValidatorConfig {
             name: "Arbitrum".to_string(),
             rpc_url: arbitrum_rpc,
             deposit_token: None,
+            avg_block_millis: 250,
         });
         chains.insert(1, ChainInfo {
             name: "Ethereum".to_string(),
             rpc_url: ethereum_rpc,
             deposit_token: None,
+            avg_block_millis: 12000,
         });
         chains.insert(100, ChainInfo {
             name: "Gnosis".to_string(),
             rpc_url: gnosis_rpc,
             deposit_token: Some(weth_gnosis),
+            avg_block_millis: 5000,
         });
 
         let inbox_arb_to_eth = Address::from_str(

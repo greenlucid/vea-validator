@@ -2,7 +2,7 @@ use alloy::providers::{Provider, DynProvider};
 use alloy::network::Ethereum;
 use tokio::time::{sleep, Duration};
 
-const BEFORE_EPOCH_BUFFER: u64 = 300;
+const BEFORE_EPOCH_BUFFER: u64 = 10;
 const AFTER_EPOCH_BUFFER: u64 = 60;
 pub struct EpochWatcher {
     provider: DynProvider<Ethereum>,
