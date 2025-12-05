@@ -1,7 +1,6 @@
 mod common;
 
 use alloy::primitives::{Address, FixedBytes, U256};
-use alloy::providers::ProviderBuilder;
 use serial_test::serial;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use vea_validator::{
     event_listener::{EventListener, ClaimEvent},
     config::ValidatorConfig,
 };
-use common::{TestFixture, advance_time, Provider};
+use common::{restore_pristine, advance_time, Provider};
 
 #[tokio::test]
 #[serial]
@@ -27,8 +26,7 @@ async fn test_event_listener_reconnects_on_stream_end() {
 
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let outbox = IVeaOutboxArbToEth::new(route.outbox_address, outbox_provider.clone());
@@ -120,7 +118,6 @@ async fn test_event_listener_reconnects_on_stream_end() {
     println!("  2. Reconnected after stream ended");
     println!("  3. Received second claim event");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -136,8 +133,7 @@ async fn test_event_listener_handles_malformed_events() {
 
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let outbox = IVeaOutboxArbToEth::new(route.outbox_address, outbox_provider.clone());
@@ -196,5 +192,4 @@ async fn test_event_listener_handles_malformed_events() {
     println!("  2. Code has checks for malformed data (topics.len() >= 3, data.len() >= 32)");
     println!("  3. Skips bad events without crashing (see event_listener.rs:56-61)");
 
-    fixture.revert_snapshots().await.unwrap();
 }

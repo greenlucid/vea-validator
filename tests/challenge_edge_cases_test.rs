@@ -1,17 +1,16 @@
 mod common;
 
 use alloy::primitives::{Address, FixedBytes, U256};
-use alloy::providers::ProviderBuilder;
 use serial_test::serial;
 use std::str::FromStr;
 use std::sync::Arc;
 use vea_validator::{
-    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToGnosis, IWETH},
+    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IWETH},
     claim_handler::ClaimHandler,
     config::ValidatorConfig,
     startup::ensure_weth_approval,
 };
-use common::{TestFixture, advance_time, Provider};
+use common::{restore_pristine, advance_time, Provider};
 
 #[tokio::test]
 #[serial]
@@ -22,8 +21,7 @@ async fn test_challenge_uses_correct_root_from_inbox() {
 
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let outbox = IVeaOutboxArbToEth::new(route.outbox_address, outbox_provider.clone());
@@ -83,7 +81,6 @@ async fn test_challenge_uses_correct_root_from_inbox() {
     assert_eq!(state_root_from_handler, correct_root, "ClaimHandler should fetch the CORRECT root from inbox");
     assert_ne!(state_root_from_handler, wrong_root, "ClaimHandler should NOT use the malicious wrong root");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -95,8 +92,7 @@ async fn test_weth_approval_set_on_startup_if_missing() {
 
     let outbox_provider = Arc::new(route.outbox_provider.clone());
     let inbox_provider = Arc::new(route.inbox_provider.clone());
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let weth_addr = route.weth_address.expect("Gnosis should use WETH");
     let weth = IWETH::new(weth_addr, outbox_provider.clone());
@@ -116,7 +112,6 @@ async fn test_weth_approval_set_on_startup_if_missing() {
     let allowance_after = weth.allowance(wallet_address, route.outbox_address).call().await.unwrap();
     assert_eq!(allowance_after, U256::MAX, "Allowance should be MAX after startup");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -128,8 +123,7 @@ async fn test_weth_approval_skipped_if_already_exists() {
 
     let outbox_provider = Arc::new(route.outbox_provider.clone());
     let inbox_provider = Arc::new(route.inbox_provider.clone());
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let weth_addr = route.weth_address.expect("Gnosis should use WETH");
     let weth = IWETH::new(weth_addr, outbox_provider.clone());
@@ -144,5 +138,4 @@ async fn test_weth_approval_skipped_if_already_exists() {
     let final_allowance = weth.allowance(wallet_address, route.outbox_address).call().await.unwrap();
     assert_eq!(final_allowance, manual_approval, "Allowance should remain unchanged when already set");
 
-    fixture.revert_snapshots().await.unwrap();
 }

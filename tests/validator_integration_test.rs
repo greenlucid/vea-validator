@@ -13,7 +13,7 @@ use vea_validator::{
     config::ValidatorConfig,
     epoch_watcher::EpochWatcher,
 };
-use common::{TestFixture, advance_time, Provider};
+use common::{restore_pristine, advance_time, Provider};
 
 #[tokio::test]
 #[serial]
@@ -29,8 +29,7 @@ async fn test_validator_detects_and_challenges_wrong_claim() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     println!("--- SETUP: Creating epoch with messages and snapshot ---");
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
@@ -142,7 +141,6 @@ async fn test_validator_detects_and_challenges_wrong_claim() {
         panic!("❌ VALIDATOR FAILED: Did not challenge the wrong claim within 5 seconds");
     }
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -159,8 +157,7 @@ async fn test_validator_triggers_bridge_resolution() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     println!("--- SETUP: Creating epoch with messages and snapshot ---");
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
@@ -312,7 +309,6 @@ async fn test_validator_triggers_bridge_resolution() {
     println!("\nThis proves the validator's complete workflow!");
     println!("Note: Full bridge message delivery (7-day delay) is not tested here");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -329,8 +325,7 @@ async fn test_validator_detects_and_challenges_wrong_claim_arb_to_gnosis() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     println!("--- SETUP: Creating epoch with messages and snapshot ---");
     let inbox = IVeaInboxArbToGnosis::new(route.inbox_address, inbox_provider.clone());
@@ -450,7 +445,6 @@ async fn test_validator_detects_and_challenges_wrong_claim_arb_to_gnosis() {
         panic!("❌ VALIDATOR FAILED: Did not challenge the wrong claim on Gnosis within 5 seconds");
     }
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -467,8 +461,7 @@ async fn test_epoch_watcher_before_buffer_triggers_save_snapshot() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let epoch_period: u64 = inbox.epochPeriod().call().await.unwrap().try_into().unwrap();
@@ -517,7 +510,7 @@ async fn test_epoch_watcher_before_buffer_triggers_save_snapshot() {
 
     let next_epoch_start = (current_epoch + 1) * epoch_period;
     let current_time = inbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(299);
+    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(9);
 
     println!("Advancing time by {} seconds to reach BEFORE_EPOCH_BUFFER", time_to_before_buffer);
     advance_time(inbox_provider.as_ref(), time_to_before_buffer).await;
@@ -541,7 +534,6 @@ async fn test_epoch_watcher_before_buffer_triggers_save_snapshot() {
     println!("\n✅ EPOCH WATCHER TEST PASSED!");
     println!("The validator correctly called saveSnapshot when time reached BEFORE_EPOCH_BUFFER");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -558,8 +550,7 @@ async fn test_epoch_watcher_after_buffer_triggers_claim() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let outbox = IVeaOutboxArbToEth::new(route.outbox_address, outbox_provider.clone());
@@ -640,7 +631,6 @@ async fn test_epoch_watcher_after_buffer_triggers_claim() {
     println!("\n✅ EPOCH WATCHER CLAIM TEST PASSED!");
     println!("The validator correctly submitted claim when time reached AFTER_EPOCH_BUFFER");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -657,8 +647,7 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let epoch_period: u64 = inbox.epochPeriod().call().await.unwrap().try_into().unwrap();
@@ -706,7 +695,7 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
 
     let next_epoch_start = (current_epoch + 1) * epoch_period;
     let current_time = inbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(299);
+    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(9);
 
     println!("Advancing time to BEFORE_EPOCH_BUFFER...");
     advance_time(inbox_provider.as_ref(), time_to_before_buffer).await;
@@ -721,7 +710,6 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
     println!("\n✅ NO DUPLICATE SNAPSHOT TEST PASSED!");
     println!("The validator correctly skipped saveSnapshot when snapshot already existed");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -738,8 +726,7 @@ async fn test_race_condition_claim_already_made() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let outbox = IVeaOutboxArbToEth::new(route.outbox_address, outbox_provider.clone());
@@ -797,7 +784,6 @@ async fn test_race_condition_claim_already_made() {
     println!("\n✅ RACE CONDITION TEST PASSED!");
     println!("Validator handles 'claim already made' without crashing");
 
-    fixture.revert_snapshots().await.unwrap();
 }
 
 #[tokio::test]
@@ -814,8 +800,7 @@ async fn test_race_condition_challenge_already_made() {
     let inbox_provider = Arc::new(route.inbox_provider.clone());
     let outbox_provider = Arc::new(route.outbox_provider.clone());
 
-    let mut fixture = TestFixture::new(outbox_provider.clone(), inbox_provider.clone());
-    fixture.take_snapshots().await.unwrap();
+    restore_pristine().await;
 
     let inbox = IVeaInboxArbToEth::new(route.inbox_address, inbox_provider.clone());
     let outbox = IVeaOutboxArbToEth::new(route.outbox_address, outbox_provider.clone());
@@ -918,5 +903,4 @@ async fn test_race_condition_challenge_already_made() {
     println!("\n✅ RACE CONDITION TEST PASSED!");
     println!("Validator handles duplicate challenges without crashing");
 
-    fixture.revert_snapshots().await.unwrap();
 }
