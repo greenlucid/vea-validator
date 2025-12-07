@@ -492,7 +492,7 @@ async fn test_epoch_watcher_before_buffer_triggers_save_snapshot() {
 
     let next_epoch_start = (current_epoch + 1) * epoch_period;
     let current_time = inbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(9);
+    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(59);
 
     println!("Advancing time by {} seconds to reach BEFORE_EPOCH_BUFFER", time_to_before_buffer);
     advance_time(inbox_provider.as_ref(), time_to_before_buffer).await;
@@ -642,7 +642,7 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
 
     let next_epoch_start = (current_epoch + 1) * epoch_period;
     let current_time = inbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(9);
+    let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(59);
 
     println!("Advancing time to BEFORE_EPOCH_BUFFER...");
     advance_time(inbox_provider.as_ref(), time_to_before_buffer).await;

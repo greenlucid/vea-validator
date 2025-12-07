@@ -158,7 +158,6 @@ impl ClaimHandler {
         let elapsed_ms = (current_ts - epoch_start_ts) * 1000;
         let from_block = current_block.saturating_sub(elapsed_ms * 110 / 100 / self.route.inbox_avg_block_millis as u64);
 
-        println!("[handle_epoch_end] epoch={}, current_block={}, from_block={}, elapsed_ms={}", epoch, current_block, from_block, elapsed_ms);
 
         let msg_sent_sig = alloy::primitives::keccak256("MessageSent(bytes)".as_bytes());
         let snapshot_saved_sig = alloy::primitives::keccak256("SnapshotSaved(bytes32,uint256,uint64)".as_bytes());
@@ -172,7 +171,6 @@ impl ClaimHandler {
         );
 
         let msg_logs = msg_logs?;
-        println!("[handle_epoch_end] msg_logs count={}", msg_logs.len());
         if msg_logs.is_empty() { return Ok(()); }
 
         let snapshot_logs = snapshot_logs?;
@@ -180,17 +178,14 @@ impl ClaimHandler {
             if last_snapshot.data().data.len() >= 96 {
                 let saved_count = U256::from_be_slice(&last_snapshot.data().data[64..96]).to::<u64>();
                 let current_count = retry_rpc(|| async { inbox.count().call().await }).await?;
-                println!("[handle_epoch_end] saved_count={}, current_count={}", saved_count, current_count);
                 if saved_count == current_count { return Ok(()); }
             }
         }
 
-        println!("[handle_epoch_end] calling saveSnapshot");
         let tx = inbox.saveSnapshot();
         let pending = tx.send().await?;
         let receipt = pending.get_receipt().await?;
         if !receipt.status() { return Err("saveSnapshot transaction failed".into()); }
-        println!("[handle_epoch_end] saveSnapshot successful");
         Ok(())
     }
     pub async fn handle_after_epoch_start(&self, epoch: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
