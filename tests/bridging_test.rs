@@ -7,13 +7,15 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use tokio::time::{timeout, Duration};
 use vea_validator::{
-    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IOutbox, Claim, Party},
+    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToGnosis, IOutbox, IAMB, IWETH, Claim, Party},
     config::ValidatorConfig,
     l2_to_l1_finder::L2ToL1Finder,
     arb_relay_handler::ArbRelayHandler,
     claim_finder::ClaimFinder,
     verification_handler::VerificationHandler,
-    scheduler::{ScheduleFile, ScheduleData, ArbToL1Task, VerificationTask, VerificationPhase},
+    amb_finder::AmbFinder,
+    amb_relay_handler::AmbRelayHandler,
+    scheduler::{ScheduleFile, ScheduleData, ArbToL1Task, VerificationTask, VerificationPhase, AmbTask},
 };
 use common::{restore_pristine, advance_time, Provider};
 use alloy::providers::DynProvider;
@@ -926,4 +928,223 @@ async fn test_verification_handler_calls_verify_snapshot() {
     assert_eq!(latest_after, target_epoch, "latestVerifiedEpoch should be updated to target epoch");
 
     println!("\nVERIFICATION HANDLER VERIFY_SNAPSHOT TEST PASSED!");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_full_arb_to_gnosis_amb_flow() {
+    println!("\n==============================================");
+    println!("FULL ARB TO GNOSIS AMB FLOW TEST");
+    println!("==============================================\n");
+
+    let c = ValidatorConfig::from_env().expect("Failed to load config");
+    let routes = c.build_routes();
+    let gnosis_route = &routes[1];
+
+    let arb_outbox_address = get_arb_outbox();
+
+    let inbox_provider = Arc::new(gnosis_route.inbox_provider.clone());
+    let eth_provider = Arc::new(gnosis_route.router_provider.as_ref().unwrap().clone());
+    let gnosis_provider = Arc::new(gnosis_route.outbox_provider.clone());
+    let router_address = gnosis_route.router_address.expect("Gnosis route should have router address");
+
+    restore_pristine().await;
+
+    let inbox = IVeaInboxArbToGnosis::new(gnosis_route.inbox_address, inbox_provider.clone());
+    let outbox = IVeaOutboxArbToGnosis::new(gnosis_route.outbox_address, gnosis_provider.clone());
+    let arb_outbox = IOutbox::new(arb_outbox_address, eth_provider.clone());
+
+    let epoch_period: u64 = inbox.epochPeriod().call().await.unwrap().try_into().unwrap();
+
+    for i in 0..3 {
+        let test_message = alloy::primitives::Bytes::from(vec![0xAA, 0xBB, i]);
+        inbox.sendMessage(
+            Address::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            test_message
+        ).send().await.unwrap().get_receipt().await.unwrap();
+    }
+
+    let target_epoch: u64 = inbox.epochNow().call().await.unwrap().try_into().unwrap();
+    inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
+    let correct_root = inbox.snapshots(U256::from(target_epoch)).call().await.unwrap();
+    println!("Phase 1: Saved snapshot for epoch {} with root: {:?}", target_epoch, correct_root);
+
+    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
+    advance_time(eth_provider.as_ref(), epoch_period + 10).await;
+    advance_time(gnosis_provider.as_ref(), epoch_period + 10).await;
+
+    let gnosis_block = gnosis_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
+    let claim_timestamp = gnosis_block.header.timestamp;
+
+    let deposit = outbox.deposit().call().await.unwrap();
+
+    let weth_address = gnosis_route.weth_address.expect("Gnosis route needs WETH");
+    let weth = IWETH::new(weth_address, gnosis_provider.clone());
+    weth.deposit().value(deposit * U256::from(2)).send().await.unwrap().get_receipt().await.unwrap();
+    weth.approve(gnosis_route.outbox_address, U256::MAX).send().await.unwrap().get_receipt().await.unwrap();
+
+    let wrong_root = FixedBytes::<32>::from([0x88; 32]);
+    outbox.claim(U256::from(target_epoch), wrong_root)
+        .send().await.unwrap()
+        .get_receipt().await.unwrap();
+    println!("Phase 2: Submitted wrong claim for epoch {}", target_epoch);
+
+    let wallet_address = c.wallet.default_signer().address();
+    let challenged_claim = Claim {
+        stateRoot: wrong_root,
+        claimer: wallet_address,
+        timestampClaimed: claim_timestamp as u32,
+        timestampVerification: 0,
+        blocknumberVerification: 0,
+        honest: Party::None,
+        challenger: Address::ZERO,
+    };
+
+    outbox.challenge(U256::from(target_epoch), challenged_claim.clone())
+        .send().await.unwrap()
+        .get_receipt().await.unwrap();
+    println!("Phase 3: Challenge submitted");
+
+    let gas_limit = U256::from(500000);
+    inbox.sendSnapshot(U256::from(target_epoch), gas_limit, challenged_claim)
+        .send().await.unwrap()
+        .get_receipt().await.unwrap();
+    println!("Phase 4: sendSnapshot called - emitted L2ToL1Tx");
+
+    let tmp_dir = tempdir().unwrap();
+    let l2_schedule_path = tmp_dir.path().join("l2_to_l1.json");
+
+    let l2_finder = L2ToL1Finder::new(gnosis_route.inbox_provider.clone())
+        .add_inbox(gnosis_route.inbox_address, &l2_schedule_path);
+
+    let l2_finder_handle = tokio::spawn(async move {
+        l2_finder.run().await;
+    });
+
+    let l2_task = timeout(Duration::from_secs(30), async {
+        loop {
+            let schedule_file: ScheduleFile<ArbToL1Task> = ScheduleFile::new(&l2_schedule_path);
+            let schedule = schedule_file.load();
+            if !schedule.pending.is_empty() {
+                return schedule.pending[0].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await.expect("L2ToL1Finder should discover task");
+
+    l2_finder_handle.abort();
+    println!("Phase 5: L2ToL1Finder discovered task - position {:#x}", l2_task.position);
+
+    let is_spent_before = arb_outbox.isSpent(l2_task.position).call().await.unwrap();
+    assert!(!is_spent_before, "Position should NOT be spent before relay");
+
+    println!("Phase 6: Advancing time for 7-day relay delay...");
+    let relay_delay: u64 = 7 * 24 * 3600;
+    advance_time(inbox_provider.as_ref(), relay_delay + 100).await;
+    advance_time(eth_provider.as_ref(), relay_delay + 100).await;
+    advance_time(gnosis_provider.as_ref(), relay_delay + 100).await;
+
+    let handler = ArbRelayHandler::new(
+        gnosis_route.inbox_provider.clone(),
+        gnosis_route.router_provider.as_ref().unwrap().clone(),
+        arb_outbox_address,
+        &l2_schedule_path,
+    );
+
+    handler.process_pending().await;
+
+    let is_spent_after = arb_outbox.isSpent(l2_task.position).call().await.unwrap();
+    assert!(is_spent_after, "Position SHOULD be spent after relay");
+    println!("Phase 7: ArbRelayHandler executed - position {:#x} is spent", l2_task.position);
+
+    for _ in 0..10 {
+        advance_time(eth_provider.as_ref(), 12).await;
+    }
+
+    let amb_schedule_path = tmp_dir.path().join("amb.json");
+
+    let amb_finder = AmbFinder::new(
+        gnosis_route.router_provider.as_ref().unwrap().clone(),
+        router_address,
+        &amb_schedule_path,
+    );
+
+    let amb_finder_handle = tokio::spawn(async move {
+        amb_finder.run().await;
+    });
+
+    let amb_task = timeout(Duration::from_secs(30), async {
+        loop {
+            let schedule_file: ScheduleFile<AmbTask> = ScheduleFile::new(&amb_schedule_path);
+            let schedule = schedule_file.load();
+            if !schedule.pending.is_empty() {
+                return schedule.pending[0].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await.expect("AmbFinder should discover Routed event");
+
+    amb_finder_handle.abort();
+    println!("Phase 8: AmbFinder discovered Routed event - epoch {}, ticket_id {:#x}", amb_task.epoch, amb_task.ticket_id);
+
+    assert_eq!(amb_task.epoch, target_epoch, "AMB task epoch should match");
+    assert!(amb_task.ticket_id != FixedBytes::<32>::ZERO, "Ticket ID should not be zero");
+
+    println!("\nFULL ARB TO GNOSIS AMB FLOW TEST PASSED!");
+    println!("Successfully verified:");
+    println!("  1. sendSnapshot emits L2ToL1Tx");
+    println!("  2. L2ToL1Finder discovers the task");
+    println!("  3. ArbRelayHandler executes via Arbitrum outbox");
+    println!("  4. Router.route() is called, emits Routed event");
+    println!("  5. AmbFinder discovers the Routed event");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_amb_relay_handler_checks_message_status() {
+    println!("\n==============================================");
+    println!("AMB RELAY HANDLER TEST: Checks Message Status");
+    println!("==============================================\n");
+
+    let c = ValidatorConfig::from_env().expect("Failed to load config");
+    let routes = c.build_routes();
+    let gnosis_route = &routes[1];
+
+    restore_pristine().await;
+
+    let gnosis_provider = gnosis_route.outbox_provider.clone();
+    let gnosis_amb = gnosis_route.amb_address.expect("Gnosis route should have AMB address");
+
+    let amb = IAMB::new(gnosis_amb, gnosis_provider.clone());
+
+    let fake_ticket_id = FixedBytes::<32>::from([0x12; 32]);
+    let is_executed = amb.messageCallStatus(fake_ticket_id).call().await.unwrap();
+    println!("Fake ticket messageCallStatus: {}", is_executed);
+    assert!(!is_executed, "Fake ticket should not be executed");
+
+    let tmp_dir = tempdir().unwrap();
+    let schedule_path = tmp_dir.path().join("amb.json");
+
+    let schedule_file: ScheduleFile<AmbTask> = ScheduleFile::new(&schedule_path);
+    let mut schedule = ScheduleData::default();
+    schedule.pending.push(AmbTask {
+        epoch: 42,
+        ticket_id: fake_ticket_id,
+        execute_after: 0,
+    });
+    schedule_file.save(&schedule);
+    println!("Pre-seeded schedule with fake AMB task");
+
+    let handler = AmbRelayHandler::new(
+        gnosis_provider,
+        gnosis_amb,
+        &schedule_path,
+    );
+
+    handler.process_pending().await;
+
+    let schedule_after = schedule_file.load();
+    assert!(schedule_after.pending.is_empty(), "Task should be removed from schedule after checking status");
+
+    println!("\nAMB RELAY HANDLER TEST PASSED!");
 }

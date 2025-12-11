@@ -75,8 +75,8 @@ impl ArbRelayHandler {
                 }
                 Ok(_) => {
                     println!(
-                        "[ArbRelayHandler] Executing relay for epoch {} (position {:#x})",
-                        task.epoch, task.position
+                        "[ArbRelayHandler] Executing relay for epoch {} (position {:#x})\n  l2_sender: {:?}\n  dest_addr: {:?}\n  data len: {}",
+                        task.epoch, task.position, task.l2_sender, task.dest_addr, task.data.len()
                     );
 
                     let proof = match self.fetch_outbox_proof(task.position).await {

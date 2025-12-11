@@ -23,6 +23,9 @@ pub struct Route {
     pub outbox_address: Address,
     pub outbox_provider: DynProvider<Ethereum>,
     pub weth_address: Option<Address>,
+    pub router_provider: Option<DynProvider<Ethereum>>,
+    pub router_address: Option<Address>,
+    pub amb_address: Option<Address>,
 }
 
 pub struct ValidatorConfig {
@@ -70,6 +73,9 @@ impl ValidatorConfig {
                 outbox_address: self.outbox_arb_to_eth,
                 outbox_provider: eth_provider.clone(),
                 weth_address: self.chains.get(&1).expect("Ethereum").deposit_token,
+                router_provider: None,
+                router_address: None,
+                amb_address: None,
             },
             Route {
                 name: "ARB_TO_GNOSIS",
@@ -81,6 +87,9 @@ impl ValidatorConfig {
                 outbox_address: self.outbox_arb_to_gnosis,
                 outbox_provider: gnosis_provider.clone(),
                 weth_address: self.chains.get(&100).expect("Gnosis").deposit_token,
+                router_provider: Some(eth_provider.clone()),
+                router_address: Some(self.router_arb_to_gnosis),
+                amb_address: Some(self.gnosis_amb),
             },
         ]
     }

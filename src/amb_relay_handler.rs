@@ -35,7 +35,7 @@ impl AmbRelayHandler {
         }
     }
 
-    async fn process_pending(&self) {
+    pub async fn process_pending(&self) {
         let schedule_file: ScheduleFile<AmbTask> = ScheduleFile::new(&self.schedule_path);
         let mut schedule = schedule_file.load();
 

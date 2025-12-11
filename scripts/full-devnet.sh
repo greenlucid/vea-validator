@@ -147,11 +147,16 @@ WETH_GNOSIS="$(
     "$GNOSIS_RPC" | addr_of
 )"
 
-# Deploy VeaInbox for Arbitrum to Gnosis
+# Predict Router address on Ethereum (will be deployed after inbox)
+NONCE_ETH_FOR_ROUTER="$(cast nonce "$FROM" --rpc-url "$ETH_RPC")"
+ROUTER_ARB_TO_GNOSIS_PREDICTED="$(cast compute-address "$FROM" --nonce "$NONCE_ETH_FOR_ROUTER" \
+  | awk '/Computed Address:/ {print $3}')"
+
+# Deploy VeaInbox for Arbitrum to Gnosis (needs router address)
 INBOX_ARB_TO_GNOSIS="$(
   create contracts/src/arbitrumToGnosis/VeaInboxArbToGnosis.sol:VeaInboxArbToGnosis \
     "$ARB_RPC" \
-    --constructor-args 3600 "$BRIDGE" | addr_of
+    --constructor-args 3600 "$ROUTER_ARB_TO_GNOSIS_PREDICTED" | addr_of
 )"
 
 # Predict VeaOutbox address on Gnosis
