@@ -86,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None,
         wallet_address,
         "schedules/arb_to_eth_verification.json",
+        "schedules/arb_to_eth_claims.json",
         "ARB_TO_ETH",
     );
 
@@ -97,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         arb_to_gnosis_route.weth_address,
         wallet_address,
         "schedules/arb_to_gnosis_verification.json",
+        "schedules/arb_to_gnosis_claims.json",
         "ARB_TO_GNOSIS",
     );
 

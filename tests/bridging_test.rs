@@ -17,8 +17,8 @@ use vea_validator::{
     amb_relay_handler::AmbRelayHandler,
     scheduler::{ScheduleFile, ScheduleData, ArbToL1Task, VerificationTask, VerificationPhase, AmbTask},
 };
-use common::{restore_pristine, advance_time, Provider};
-use alloy::providers::DynProvider;
+use common::{restore_pristine, advance_time};
+use alloy::providers::{DynProvider, Provider};
 use alloy::network::Ethereum;
 
 const ARB_OUTBOX_ENV: &str = "ARB_OUTBOX";
@@ -65,32 +65,25 @@ async fn test_l2_to_l1_finder_discovers_snapshot_sent_event() {
 
     println!("Saved snapshot for epoch {} with root: {:?}", current_epoch, correct_root);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
+    advance_time(epoch_period + 10).await;
 
     let target_epoch = current_epoch;
-
-    let eth_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
-    let eth_timestamp = eth_block.header.timestamp;
-    let target_timestamp = (target_epoch + 1) * epoch_period + 10;
-    let advance_amount = target_timestamp.saturating_sub(eth_timestamp);
-    if advance_amount > 0 {
-        advance_time(outbox_provider.as_ref(), advance_amount).await;
-    }
 
     println!("Submitting wrong claim to trigger challenge + bridging...");
     let wrong_root = FixedBytes::<32>::from([0x99; 32]);
     let deposit = outbox.deposit().call().await.unwrap();
-    outbox.claim(U256::from(target_epoch), wrong_root)
+    let claim_receipt = outbox.claim(U256::from(target_epoch), wrong_root)
         .value(deposit)
         .send().await.unwrap()
         .get_receipt().await.unwrap();
+    let claim_block = outbox_provider.get_block_by_number(claim_receipt.block_number.unwrap().into()).await.unwrap().unwrap();
+    let claim_timestamp = claim_block.header.timestamp;
 
     let wallet_address = c.wallet.default_signer().address();
     let claim = Claim {
         stateRoot: wrong_root,
         claimer: wallet_address,
-        timestampClaimed: eth_timestamp as u32,
+        timestampClaimed: claim_timestamp as u32,
         timestampVerification: 0,
         blocknumberVerification: 0,
         honest: Party::None,
@@ -280,8 +273,7 @@ async fn test_full_arb_to_eth_relay_flow() {
         inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
         let init_root = inbox.snapshots(U256::from(init_epoch)).call().await.unwrap();
 
-        advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-        advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
+        advance_time(epoch_period + 10).await;
 
         let init_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
         let init_claim_ts = init_block.header.timestamp;
@@ -291,8 +283,7 @@ async fn test_full_arb_to_eth_relay_flow() {
             .send().await.unwrap()
             .get_receipt().await.unwrap();
 
-        advance_time(inbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
-        advance_time(outbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
+        advance_time(seq_delay + epoch_period + 10).await;
 
         let init_claim = Claim {
             stateRoot: init_root,
@@ -312,8 +303,7 @@ async fn test_full_arb_to_eth_relay_flow() {
         let verif_ts = verif_block.header.timestamp as u32;
         let verif_bn = verif_block.header.number as u32;
 
-        advance_time(inbox_provider.as_ref(), min_challenge + 10).await;
-        advance_time(outbox_provider.as_ref(), min_challenge + 10).await;
+        advance_time(min_challenge + 10).await;
 
         let verified_claim = Claim {
             stateRoot: init_root,
@@ -347,15 +337,14 @@ async fn test_full_arb_to_eth_relay_flow() {
 
     println!("Phase 1: Setup complete - challenged epoch {}", challenged_epoch);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
+    advance_time(epoch_period + 10).await;
 
     let eth_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
     let eth_timestamp = eth_block.header.timestamp;
     let target_timestamp = (challenged_epoch + 1) * epoch_period + 10;
     let advance_amount = target_timestamp.saturating_sub(eth_timestamp);
     if advance_amount > 0 {
-        advance_time(outbox_provider.as_ref(), advance_amount).await;
+        advance_time(advance_amount).await;
     }
 
     let wrong_root = FixedBytes::<32>::from([0x77; 32]);
@@ -445,8 +434,7 @@ async fn test_full_arb_to_eth_relay_flow() {
         inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
         let honest_root = inbox.snapshots(U256::from(honest_epoch)).call().await.unwrap();
 
-        advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-        advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
+        advance_time(epoch_period + 10).await;
         time_accumulated += epoch_period + 10;
 
         let block_after_epoch = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
@@ -457,8 +445,7 @@ async fn test_full_arb_to_eth_relay_flow() {
             .send().await.unwrap()
             .get_receipt().await.unwrap();
 
-        advance_time(inbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
-        advance_time(outbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
+        advance_time(seq_delay + epoch_period + 10).await;
         time_accumulated += seq_delay + epoch_period + 10;
 
         let honest_claim = Claim {
@@ -479,8 +466,7 @@ async fn test_full_arb_to_eth_relay_flow() {
         let verif_ts = verif_block.header.timestamp as u32;
         let verif_bn = verif_block.header.number as u32;
 
-        advance_time(inbox_provider.as_ref(), min_challenge + 10).await;
-        advance_time(outbox_provider.as_ref(), min_challenge + 10).await;
+        advance_time(min_challenge + 10).await;
         time_accumulated += min_challenge + 10;
 
         let verified_claim = Claim {
@@ -567,8 +553,7 @@ async fn test_claim_finder_challenges_invalid_claim() {
     let correct_root = inbox.snapshots(U256::from(target_epoch)).call().await.unwrap();
     println!("Saved snapshot for epoch {} with correct root: {:?}", target_epoch, correct_root);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
+    advance_time(epoch_period + 10).await;
 
     let wrong_root = FixedBytes::<32>::from([0x99; 32]);
     let deposit = outbox.deposit().call().await.unwrap();
@@ -582,10 +567,11 @@ async fn test_claim_finder_challenges_invalid_claim() {
     let original_claim_hash = outbox.claimHashes(U256::from(target_epoch)).call().await.unwrap();
     println!("Original claim hash: {:?}", original_claim_hash);
 
-    advance_time(outbox_provider.as_ref(), 16 * 60).await;
+    advance_time(16 * 60).await;
 
     let tmp_dir = tempdir().unwrap();
     let schedule_path = tmp_dir.path().join("verification.json");
+    let claims_path = tmp_dir.path().join("claims.json");
 
     let wallet_address = c.wallet.default_signer().address();
 
@@ -597,6 +583,7 @@ async fn test_claim_finder_challenges_invalid_claim() {
         None,
         wallet_address,
         &schedule_path,
+        &claims_path,
         "TEST",
     );
 
@@ -656,8 +643,7 @@ async fn test_claim_finder_schedules_valid_claim_verification() {
     let correct_root = inbox.snapshots(U256::from(target_epoch)).call().await.unwrap();
     println!("Saved snapshot for epoch {} with root: {:?}", target_epoch, correct_root);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
+    advance_time(epoch_period + 10).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(target_epoch), correct_root)
@@ -666,10 +652,11 @@ async fn test_claim_finder_schedules_valid_claim_verification() {
         .get_receipt().await.unwrap();
     println!("Submitted VALID claim for epoch {}", target_epoch);
 
-    advance_time(outbox_provider.as_ref(), 16 * 60).await;
+    advance_time(16 * 60).await;
 
     let tmp_dir = tempdir().unwrap();
     let schedule_path = tmp_dir.path().join("verification.json");
+    let claims_path = tmp_dir.path().join("claims.json");
 
     let wallet_address = c.wallet.default_signer().address();
 
@@ -681,6 +668,7 @@ async fn test_claim_finder_schedules_valid_claim_verification() {
         None,
         wallet_address,
         &schedule_path,
+        &claims_path,
         "TEST",
     );
 
@@ -757,11 +745,7 @@ async fn test_verification_handler_calls_start_verification() {
     let correct_root = inbox.snapshots(U256::from(target_epoch)).call().await.unwrap();
     println!("Saved snapshot for epoch {} with root: {:?}", target_epoch, correct_root);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
-
-    let eth_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
-    let claim_timestamp = eth_block.header.timestamp;
+    advance_time(epoch_period + 10).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(target_epoch), correct_root)
@@ -770,28 +754,45 @@ async fn test_verification_handler_calls_start_verification() {
         .get_receipt().await.unwrap();
     println!("Submitted valid claim for epoch {}", target_epoch);
 
-    let wallet_address = c.wallet.default_signer().address();
+    advance_time(16 * 60).await;
 
     let tmp_dir = tempdir().unwrap();
     let schedule_path = tmp_dir.path().join("verification.json");
+    let claims_path = tmp_dir.path().join("claims.json");
+
+    let wallet_address = c.wallet.default_signer().address();
+
+    let finder = ClaimFinder::new(
+        route.inbox_provider.clone(),
+        route.outbox_provider.clone(),
+        route.inbox_address,
+        route.outbox_address,
+        None,
+        wallet_address,
+        &schedule_path,
+        &claims_path,
+        "TEST",
+    );
+
+    let finder_handle = tokio::spawn(async move {
+        finder.run().await;
+    });
 
     let schedule_file: ScheduleFile<VerificationTask> = ScheduleFile::new(&schedule_path);
-    let mut schedule = ScheduleData::default();
-    schedule.pending.push(VerificationTask {
-        epoch: target_epoch,
-        execute_after: 0,
-        phase: VerificationPhase::StartVerification,
-        state_root: correct_root,
-        claimer: wallet_address,
-        timestamp_claimed: claim_timestamp as u32,
-        timestamp_verification: 0,
-        blocknumber_verification: 0,
-    });
-    schedule_file.save(&schedule);
-    println!("Pre-seeded schedule with StartVerification task for epoch {}", target_epoch);
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let schedule = schedule_file.load();
+            if schedule.pending.iter().any(|t| t.epoch == target_epoch && matches!(t.phase, VerificationPhase::StartVerification)) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await.expect("ClaimFinder should schedule StartVerification task");
 
-    advance_time(inbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
+    finder_handle.abort();
+    println!("ClaimFinder discovered valid claim and scheduled StartVerification");
+
+    advance_time(seq_delay + epoch_period + 10).await;
 
     let handler = VerificationHandler::new(
         route.outbox_provider.clone(),
@@ -852,24 +853,20 @@ async fn test_verification_handler_calls_verify_snapshot() {
     let correct_root = inbox.snapshots(U256::from(target_epoch)).call().await.unwrap();
     println!("Saved snapshot for epoch {} with root: {:?}", target_epoch, correct_root);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), epoch_period + 10).await;
-
-    let eth_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
-    let claim_timestamp = eth_block.header.timestamp;
+    advance_time(epoch_period + 10).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
-    outbox.claim(U256::from(target_epoch), correct_root)
+    let claim_receipt = outbox.claim(U256::from(target_epoch), correct_root)
         .value(deposit)
         .send().await.unwrap()
         .get_receipt().await.unwrap();
+    let claim_block = outbox_provider.get_block_by_number(claim_receipt.block_number.unwrap().into()).await.unwrap().unwrap();
+    let claim_timestamp = claim_block.header.timestamp;
     println!("Submitted valid claim for epoch {}", target_epoch);
 
+    advance_time(seq_delay + epoch_period + 10).await;
+
     let wallet_address = c.wallet.default_signer().address();
-
-    advance_time(inbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
-    advance_time(outbox_provider.as_ref(), seq_delay + epoch_period + 10).await;
-
     let claim_for_start = Claim {
         stateRoot: correct_root,
         claimer: wallet_address,
@@ -883,32 +880,45 @@ async fn test_verification_handler_calls_verify_snapshot() {
     outbox.startVerification(U256::from(target_epoch), claim_for_start)
         .send().await.unwrap()
         .get_receipt().await.unwrap();
-    println!("startVerification called manually");
+    println!("startVerification called - emits VerificationStarted event");
 
-    let verif_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
-    let verif_ts = verif_block.header.timestamp as u32;
-    let verif_bn = verif_block.header.number as u32;
+    advance_time(16 * 60).await;
 
     let tmp_dir = tempdir().unwrap();
     let schedule_path = tmp_dir.path().join("verification.json");
+    let claims_path = tmp_dir.path().join("claims.json");
+
+    let finder = ClaimFinder::new(
+        route.inbox_provider.clone(),
+        route.outbox_provider.clone(),
+        route.inbox_address,
+        route.outbox_address,
+        None,
+        wallet_address,
+        &schedule_path,
+        &claims_path,
+        "TEST",
+    );
+
+    let finder_handle = tokio::spawn(async move {
+        finder.run().await;
+    });
 
     let schedule_file: ScheduleFile<VerificationTask> = ScheduleFile::new(&schedule_path);
-    let mut schedule = ScheduleData::default();
-    schedule.pending.push(VerificationTask {
-        epoch: target_epoch,
-        execute_after: 0,
-        phase: VerificationPhase::VerifySnapshot,
-        state_root: correct_root,
-        claimer: wallet_address,
-        timestamp_claimed: claim_timestamp as u32,
-        timestamp_verification: verif_ts,
-        blocknumber_verification: verif_bn,
-    });
-    schedule_file.save(&schedule);
-    println!("Pre-seeded schedule with VerifySnapshot task for epoch {}", target_epoch);
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let schedule = schedule_file.load();
+            if schedule.pending.iter().any(|t| t.epoch == target_epoch && matches!(t.phase, VerificationPhase::VerifySnapshot)) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await.expect("ClaimFinder should schedule VerifySnapshot task after seeing VerificationStarted");
 
-    advance_time(inbox_provider.as_ref(), min_challenge + 10).await;
-    advance_time(outbox_provider.as_ref(), min_challenge + 10).await;
+    finder_handle.abort();
+    println!("ClaimFinder discovered VerificationStarted and scheduled VerifySnapshot");
+
+    advance_time(min_challenge + 10).await;
 
     let handler = VerificationHandler::new(
         route.outbox_provider.clone(),
@@ -969,18 +979,13 @@ async fn test_full_arb_to_gnosis_amb_flow() {
     let correct_root = inbox.snapshots(U256::from(target_epoch)).call().await.unwrap();
     println!("Phase 1: Saved snapshot for epoch {} with root: {:?}", target_epoch, correct_root);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 10).await;
-    advance_time(eth_provider.as_ref(), epoch_period + 10).await;
-    advance_time(gnosis_provider.as_ref(), epoch_period + 10).await;
-
-    let gnosis_block = gnosis_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
-    let claim_timestamp = gnosis_block.header.timestamp;
+    advance_time(epoch_period + 10).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
 
     let weth_address = gnosis_route.weth_address.expect("Gnosis route needs WETH");
     let weth = IWETH::new(weth_address, gnosis_provider.clone());
-    weth.deposit().value(deposit * U256::from(2)).send().await.unwrap().get_receipt().await.unwrap();
+    weth.deposit().value(deposit * U256::from(10)).send().await.unwrap().get_receipt().await.unwrap();
     weth.approve(gnosis_route.outbox_address, U256::MAX).send().await.unwrap().get_receipt().await.unwrap();
 
     let wrong_root = FixedBytes::<32>::from([0x88; 32]);
@@ -989,30 +994,51 @@ async fn test_full_arb_to_gnosis_amb_flow() {
         .get_receipt().await.unwrap();
     println!("Phase 2: Submitted wrong claim for epoch {}", target_epoch);
 
-    let wallet_address = c.wallet.default_signer().address();
-    let challenged_claim = Claim {
-        stateRoot: wrong_root,
-        claimer: wallet_address,
-        timestampClaimed: claim_timestamp as u32,
-        timestampVerification: 0,
-        blocknumberVerification: 0,
-        honest: Party::None,
-        challenger: Address::ZERO,
-    };
-
-    outbox.challenge(U256::from(target_epoch), challenged_claim.clone())
-        .send().await.unwrap()
-        .get_receipt().await.unwrap();
-    println!("Phase 3: Challenge submitted");
-
-    let gas_limit = U256::from(500000);
-    inbox.sendSnapshot(U256::from(target_epoch), gas_limit, challenged_claim)
-        .send().await.unwrap()
-        .get_receipt().await.unwrap();
-    println!("Phase 4: sendSnapshot called - emitted L2ToL1Tx");
+    advance_time(16 * 60).await;
 
     let tmp_dir = tempdir().unwrap();
+    let claim_schedule_path = tmp_dir.path().join("claim_finder.json");
+    let claims_path = tmp_dir.path().join("claims.json");
     let l2_schedule_path = tmp_dir.path().join("l2_to_l1.json");
+
+    let wallet_address = c.wallet.default_signer().address();
+    let claim_finder = ClaimFinder::new(
+        gnosis_route.inbox_provider.clone(),
+        gnosis_route.outbox_provider.clone(),
+        gnosis_route.inbox_address,
+        gnosis_route.outbox_address,
+        gnosis_route.weth_address,
+        wallet_address,
+        &claim_schedule_path,
+        &claims_path,
+        "TEST",
+    );
+
+    let inbox_provider_clone = inbox_provider.clone();
+    let inbox_address = gnosis_route.inbox_address;
+    let claim_finder_handle = tokio::spawn(async move {
+        claim_finder.run().await;
+    });
+
+    println!("Phase 3: Waiting for ClaimFinder to challenge and call sendSnapshot...");
+
+    let snapshot_sent_sig = alloy::primitives::keccak256("SnapshotSent(uint256,bytes32)");
+    let snapshot_sent = timeout(Duration::from_secs(120), async {
+        loop {
+            let filter = alloy::rpc::types::Filter::new()
+                .address(inbox_address)
+                .event_signature(snapshot_sent_sig);
+            let logs = inbox_provider_clone.get_logs(&filter).await.unwrap();
+            if !logs.is_empty() {
+                return logs[0].clone();
+            }
+            advance_time(16 * 60).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await.expect("ClaimFinder should challenge invalid claim and call sendSnapshot");
+
+    claim_finder_handle.abort();
+    println!("Phase 4: ClaimFinder challenged bad claim AND called sendSnapshot - SnapshotSent at block {:?}", snapshot_sent.block_number);
 
     let l2_finder = L2ToL1Finder::new(gnosis_route.inbox_provider.clone())
         .add_inbox(gnosis_route.inbox_address, &l2_schedule_path);
@@ -1040,9 +1066,7 @@ async fn test_full_arb_to_gnosis_amb_flow() {
 
     println!("Phase 6: Advancing time for 7-day relay delay...");
     let relay_delay: u64 = 7 * 24 * 3600;
-    advance_time(inbox_provider.as_ref(), relay_delay + 100).await;
-    advance_time(eth_provider.as_ref(), relay_delay + 100).await;
-    advance_time(gnosis_provider.as_ref(), relay_delay + 100).await;
+    advance_time(relay_delay + 100).await;
 
     let handler = ArbRelayHandler::new(
         gnosis_route.inbox_provider.clone(),
@@ -1058,7 +1082,7 @@ async fn test_full_arb_to_gnosis_amb_flow() {
     println!("Phase 7: ArbRelayHandler executed - position {:#x} is spent", l2_task.position);
 
     for _ in 0..10 {
-        advance_time(eth_provider.as_ref(), 12).await;
+        advance_time(12).await;
     }
 
     let amb_schedule_path = tmp_dir.path().join("amb.json");
@@ -1090,6 +1114,27 @@ async fn test_full_arb_to_gnosis_amb_flow() {
     assert_eq!(amb_task.epoch, target_epoch, "AMB task epoch should match");
     assert!(amb_task.ticket_id != FixedBytes::<32>::ZERO, "Ticket ID should not be zero");
 
+    let gnosis_amb = gnosis_route.amb_address.expect("Gnosis route should have AMB address");
+    let amb = IAMB::new(gnosis_amb, gnosis_provider.clone());
+
+    let is_executed_before = amb.messageCallStatus(amb_task.ticket_id).call().await.unwrap();
+    assert!(!is_executed_before, "AMB message should NOT be executed yet");
+
+    let amb_handler = AmbRelayHandler::new(
+        gnosis_route.outbox_provider.clone(),
+        gnosis_amb,
+        &amb_schedule_path,
+    );
+
+    amb_handler.process_pending().await;
+
+    let is_executed_after = amb.messageCallStatus(amb_task.ticket_id).call().await.unwrap();
+    assert!(is_executed_after, "AMB message SHOULD be executed after AmbRelayHandler");
+    println!("Phase 9: AmbRelayHandler executed AMB message - ticket_id {:#x} is now executed", amb_task.ticket_id);
+
+    let amb_schedule_after: ScheduleData<AmbTask> = ScheduleFile::new(&amb_schedule_path).load();
+    assert!(amb_schedule_after.pending.is_empty(), "AMB schedule should be empty after successful relay");
+
     println!("\nFULL ARB TO GNOSIS AMB FLOW TEST PASSED!");
     println!("Successfully verified:");
     println!("  1. sendSnapshot emits L2ToL1Tx");
@@ -1097,54 +1142,5 @@ async fn test_full_arb_to_gnosis_amb_flow() {
     println!("  3. ArbRelayHandler executes via Arbitrum outbox");
     println!("  4. Router.route() is called, emits Routed event");
     println!("  5. AmbFinder discovers the Routed event");
-}
-
-#[tokio::test]
-#[serial]
-async fn test_amb_relay_handler_checks_message_status() {
-    println!("\n==============================================");
-    println!("AMB RELAY HANDLER TEST: Checks Message Status");
-    println!("==============================================\n");
-
-    let c = ValidatorConfig::from_env().expect("Failed to load config");
-    let routes = c.build_routes();
-    let gnosis_route = &routes[1];
-
-    restore_pristine().await;
-
-    let gnosis_provider = gnosis_route.outbox_provider.clone();
-    let gnosis_amb = gnosis_route.amb_address.expect("Gnosis route should have AMB address");
-
-    let amb = IAMB::new(gnosis_amb, gnosis_provider.clone());
-
-    let fake_ticket_id = FixedBytes::<32>::from([0x12; 32]);
-    let is_executed = amb.messageCallStatus(fake_ticket_id).call().await.unwrap();
-    println!("Fake ticket messageCallStatus: {}", is_executed);
-    assert!(!is_executed, "Fake ticket should not be executed");
-
-    let tmp_dir = tempdir().unwrap();
-    let schedule_path = tmp_dir.path().join("amb.json");
-
-    let schedule_file: ScheduleFile<AmbTask> = ScheduleFile::new(&schedule_path);
-    let mut schedule = ScheduleData::default();
-    schedule.pending.push(AmbTask {
-        epoch: 42,
-        ticket_id: fake_ticket_id,
-        execute_after: 0,
-    });
-    schedule_file.save(&schedule);
-    println!("Pre-seeded schedule with fake AMB task");
-
-    let handler = AmbRelayHandler::new(
-        gnosis_provider,
-        gnosis_amb,
-        &schedule_path,
-    );
-
-    handler.process_pending().await;
-
-    let schedule_after = schedule_file.load();
-    assert!(schedule_after.pending.is_empty(), "Task should be removed from schedule after checking status");
-
-    println!("\nAMB RELAY HANDLER TEST PASSED!");
+    println!("  6. AmbRelayHandler executes the AMB message");
 }

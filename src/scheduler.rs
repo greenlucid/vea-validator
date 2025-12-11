@@ -94,6 +94,14 @@ pub struct VerificationTask {
     pub blocknumber_verification: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimedData {
+    pub epoch: u64,
+    pub state_root: FixedBytes<32>,
+    pub claimer: Address,
+    pub timestamp_claimed: u32,
+}
+
 mod u256_hex {
     use alloy::primitives::U256;
     use serde::{self, Deserialize, Deserializer, Serializer};

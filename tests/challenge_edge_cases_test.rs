@@ -10,7 +10,8 @@ use vea_validator::{
     config::ValidatorConfig,
     startup::ensure_weth_approval,
 };
-use common::{restore_pristine, advance_time, Provider};
+use common::{restore_pristine, advance_time};
+use alloy::providers::Provider;
 
 #[tokio::test]
 #[serial]
@@ -40,7 +41,7 @@ async fn test_challenge_uses_correct_root_from_inbox() {
     println!("Saved snapshot for epoch {}", current_epoch);
 
     // Advance inbox to next epoch
-    advance_time(inbox_provider.as_ref(), epoch_period + 70).await;
+    advance_time(epoch_period + 70).await;
 
     // Sync outbox to EXACT same timestamp as inbox (after inbox advancement)
     let inbox_block_after = inbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
@@ -54,7 +55,7 @@ async fn test_challenge_uses_correct_root_from_inbox() {
     if inbox_timestamp_after > dest_timestamp {
         let diff = inbox_timestamp_after - dest_timestamp;
         println!("Advancing outbox by {} seconds to match inbox", diff);
-        advance_time(outbox_provider.as_ref(), diff).await;
+        advance_time(diff).await;
     } else if dest_timestamp > inbox_timestamp_after {
         let diff = dest_timestamp - inbox_timestamp_after;
         println!("WARNING: Outbox is {} seconds ahead of inbox - this shouldn't happen!", diff);

@@ -11,7 +11,8 @@ use vea_validator::{
     config::ValidatorConfig,
     epoch_watcher::EpochWatcher,
 };
-use common::{restore_pristine, advance_time, Provider};
+use common::{restore_pristine, advance_time};
+use alloy::providers::Provider;
 
 #[tokio::test]
 #[serial]
@@ -60,7 +61,7 @@ async fn test_epoch_watcher_saves_snapshot_before_epoch_ends() {
     let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(59);
 
     println!("Advancing time by {} seconds to reach BEFORE_EPOCH_BUFFER", time_to_before_buffer);
-    advance_time(inbox_provider.as_ref(), time_to_before_buffer).await;
+    advance_time(time_to_before_buffer).await;
 
     println!("Waiting for validator to call saveSnapshot...");
     let result = timeout(Duration::from_secs(30), async {
@@ -117,7 +118,7 @@ async fn test_epoch_watcher_after_epoch_verifies_claim() {
 
     println!("Epoch {} snapshot saved: {:?}", current_epoch, snapshot);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 70).await;
+    advance_time(epoch_period + 70).await;
 
     let target_epoch = current_epoch;
     let dest_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
@@ -125,7 +126,7 @@ async fn test_epoch_watcher_after_epoch_verifies_claim() {
     let target_timestamp = (target_epoch + 1) * epoch_period + 70;
     let advance_amount = target_timestamp.saturating_sub(dest_timestamp);
     if advance_amount > 0 {
-        advance_time(outbox_provider.as_ref(), advance_amount).await;
+        advance_time(advance_amount).await;
     }
 
     let initial_claim_hash = outbox.claimHashes(U256::from(target_epoch)).call().await.unwrap();
@@ -207,7 +208,7 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
     let time_to_before_buffer = next_epoch_start.saturating_sub(current_time).saturating_sub(59);
 
     println!("Advancing time to BEFORE_EPOCH_BUFFER...");
-    advance_time(inbox_provider.as_ref(), time_to_before_buffer).await;
+    advance_time(time_to_before_buffer).await;
 
     tokio::time::sleep(Duration::from_secs(15)).await;
 
@@ -254,7 +255,7 @@ async fn test_race_condition_claim_already_made() {
 
     println!("Epoch {} snapshot saved: {:?}", current_epoch, snapshot);
 
-    advance_time(inbox_provider.as_ref(), epoch_period + 70).await;
+    advance_time(epoch_period + 70).await;
 
     let target_epoch = current_epoch;
     let dest_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
@@ -262,7 +263,7 @@ async fn test_race_condition_claim_already_made() {
     let target_timestamp = (target_epoch + 1) * epoch_period + 70;
     let advance_amount = target_timestamp.saturating_sub(dest_timestamp);
     if advance_amount > 0 {
-        advance_time(outbox_provider.as_ref(), advance_amount).await;
+        advance_time(advance_amount).await;
     }
 
     println!("Another validator submits claim first...");
