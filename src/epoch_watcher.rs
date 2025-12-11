@@ -2,6 +2,7 @@ use alloy::providers::{Provider, DynProvider};
 use alloy::network::Ethereum;
 use tokio::time::{sleep, Duration};
 use std::sync::Arc;
+use std::error::Error;
 use crate::claim_handler::ClaimHandler;
 
 const BEFORE_EPOCH_BUFFER: u64 = 60;
@@ -46,7 +47,7 @@ impl EpochWatcher {
                 let prev_epoch = current_epoch - 1;
                 if last_after_epoch != Some(prev_epoch) {
                     self.handler.handle_after_epoch_start(prev_epoch).await
-                        .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle after epoch start for epoch {}: {}", self.route_name, prev_epoch, e));
+                        .unwrap_or_else(|e: Box<dyn Error + Send + Sync + 'static>| panic!("[{}] FATAL: Failed to handle after epoch start for epoch {}: {}", self.route_name, prev_epoch, e));
                     last_after_epoch = Some(prev_epoch);
                 }
             }
