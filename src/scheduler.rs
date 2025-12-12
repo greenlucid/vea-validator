@@ -70,13 +70,6 @@ pub struct ArbToL1Task {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AmbTask {
-    pub epoch: u64,
-    pub ticket_id: FixedBytes<32>,
-    pub execute_after: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VerificationPhase {
     StartVerification,
     VerifySnapshot,

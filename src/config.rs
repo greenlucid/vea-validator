@@ -23,9 +23,6 @@ pub struct Route {
     pub outbox_address: Address,
     pub outbox_provider: DynProvider<Ethereum>,
     pub weth_address: Option<Address>,
-    pub router_provider: Option<DynProvider<Ethereum>>,
-    pub router_address: Option<Address>,
-    pub amb_address: Option<Address>,
 }
 
 pub struct ValidatorConfig {
@@ -36,9 +33,7 @@ pub struct ValidatorConfig {
     pub outbox_arb_to_eth: Address,
     pub inbox_arb_to_gnosis: Address,
     pub outbox_arb_to_gnosis: Address,
-    pub router_arb_to_gnosis: Address,
     pub arb_outbox: Address,
-    pub gnosis_amb: Address,
 }
 impl ValidatorConfig {
     pub fn build_routes(&self) -> Vec<Route> {
@@ -73,9 +68,6 @@ impl ValidatorConfig {
                 outbox_address: self.outbox_arb_to_eth,
                 outbox_provider: eth_provider.clone(),
                 weth_address: self.chains.get(&1).expect("Ethereum").deposit_token,
-                router_provider: None,
-                router_address: None,
-                amb_address: None,
             },
             Route {
                 name: "ARB_TO_GNOSIS",
@@ -87,9 +79,6 @@ impl ValidatorConfig {
                 outbox_address: self.outbox_arb_to_gnosis,
                 outbox_provider: gnosis_provider.clone(),
                 weth_address: self.chains.get(&100).expect("Gnosis").deposit_token,
-                router_provider: Some(eth_provider.clone()),
-                router_address: Some(self.router_arb_to_gnosis),
-                amb_address: Some(self.gnosis_amb),
             },
         ]
     }
@@ -153,17 +142,9 @@ impl ValidatorConfig {
             &std::env::var("VEA_OUTBOX_ARB_TO_GNOSIS")
                 .expect("VEA_OUTBOX_ARB_TO_GNOSIS must be set")
         )?;
-        let router_arb_to_gnosis = Address::from_str(
-            &std::env::var("VEA_ROUTER_ARB_TO_GNOSIS")
-                .expect("VEA_ROUTER_ARB_TO_GNOSIS must be set")
-        )?;
         let arb_outbox = Address::from_str(
             &std::env::var("ARB_OUTBOX")
                 .expect("ARB_OUTBOX must be set")
-        )?;
-        let gnosis_amb = Address::from_str(
-            &std::env::var("GNOSIS_AMB")
-                .expect("GNOSIS_AMB must be set")
         )?;
 
         Ok(Self {
@@ -174,9 +155,7 @@ impl ValidatorConfig {
             outbox_arb_to_eth,
             inbox_arb_to_gnosis,
             outbox_arb_to_gnosis,
-            router_arb_to_gnosis,
             arb_outbox,
-            gnosis_amb,
         })
     }
 }

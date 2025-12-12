@@ -6,7 +6,5 @@ pub mod startup;
 pub mod scheduler;
 pub mod l2_to_l1_finder;
 pub mod arb_relay_handler;
-pub mod amb_finder;
-pub mod amb_relay_handler;
 pub mod claim_finder;
 pub mod verification_handler;

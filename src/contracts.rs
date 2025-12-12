@@ -144,20 +144,4 @@ sol! {
     interface INodeInterface {
         function constructOutboxProof(uint64 size, uint64 leaf) external view returns (bytes32 send, bytes32 root, bytes32[] memory proof);
     }
-
-    #[derive(Debug)]
-    #[sol(rpc)]
-    interface IAMB {
-        function messageCallStatus(bytes32 messageId) external view returns (bool);
-        function requireToPassMessage(address _contract, bytes calldata _data, uint256 _gas) external returns (bytes32);
-        function maxGasPerTx() external view returns (uint256);
-        function messageSender() external view returns (address);
-        function messageSourceChainId() external view returns (bytes32);
-    }
-
-    #[derive(Debug)]
-    #[sol(rpc)]
-    interface IRouterArbToGnosis {
-        event Routed(uint256 indexed _epoch, bytes32 _ticketID);
-    }
 }

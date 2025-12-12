@@ -9,8 +9,6 @@ use vea_validator::{
     config::ValidatorConfig,
     l2_to_l1_finder::L2ToL1Finder,
     arb_relay_handler::ArbRelayHandler,
-    amb_finder::AmbFinder,
-    amb_relay_handler::AmbRelayHandler,
     claim_finder::ClaimFinder,
     verification_handler::VerificationHandler,
     startup::{check_rpc_health, check_balances},
@@ -52,12 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .add_inbox(arb_to_eth_route.inbox_address, "schedules/arb_to_eth_relay.json")
         .add_inbox(arb_to_gnosis_route.inbox_address, "schedules/arb_to_gnosis_relay.json");
 
-    let amb_finder = AmbFinder::new(
-        arb_to_eth_route.outbox_provider.clone(),
-        c.router_arb_to_gnosis,
-        "schedules/amb_to_gnosis.json",
-    );
-
     let arb_to_eth_relay_handler = ArbRelayHandler::new(
         arb_to_eth_route.inbox_provider.clone(),
         arb_to_eth_route.outbox_provider.clone(),
@@ -70,12 +62,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         arb_to_eth_route.outbox_provider.clone(),
         c.arb_outbox,
         "schedules/arb_to_gnosis_relay.json",
-    );
-
-    let amb_relay_handler = AmbRelayHandler::new(
-        arb_to_gnosis_route.outbox_provider.clone(),
-        c.gnosis_amb,
-        "schedules/amb_to_gnosis.json",
     );
 
     let arb_to_eth_claim_finder = ClaimFinder::new(
@@ -125,27 +111,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let h1 = tokio::spawn(async move { let _ = arb_to_eth_epoch_watcher.watch_epochs(epoch_period).await; });
     let h2 = tokio::spawn(async move { let _ = arb_to_gnosis_epoch_watcher.watch_epochs(epoch_period).await; });
     let h3 = tokio::spawn(async move { l2_to_l1_finder.run().await });
-    let h4 = tokio::spawn(async move { amb_finder.run().await });
-    let h5 = tokio::spawn(async move { arb_to_eth_relay_handler.run().await });
-    let h6 = tokio::spawn(async move { arb_to_gnosis_relay_handler.run().await });
-    let h7 = tokio::spawn(async move { amb_relay_handler.run().await });
-    let h8 = tokio::spawn(async move { arb_to_eth_claim_finder.run().await });
-    let h9 = tokio::spawn(async move { arb_to_gnosis_claim_finder.run().await });
-    let h10 = tokio::spawn(async move { arb_to_eth_verification_handler.run().await });
-    let h11 = tokio::spawn(async move { arb_to_gnosis_verification_handler.run().await });
+    let h4 = tokio::spawn(async move { arb_to_eth_relay_handler.run().await });
+    let h5 = tokio::spawn(async move { arb_to_gnosis_relay_handler.run().await });
+    let h6 = tokio::spawn(async move { arb_to_eth_claim_finder.run().await });
+    let h7 = tokio::spawn(async move { arb_to_gnosis_claim_finder.run().await });
+    let h8 = tokio::spawn(async move { arb_to_eth_verification_handler.run().await });
+    let h9 = tokio::spawn(async move { arb_to_gnosis_verification_handler.run().await });
 
     tokio::select! {
         _ = h1 => println!("ARB_TO_ETH epoch watcher stopped"),
         _ = h2 => println!("ARB_TO_GNOSIS epoch watcher stopped"),
         _ = h3 => println!("L2ToL1 finder stopped"),
-        _ = h4 => println!("AMB finder stopped"),
-        _ = h5 => println!("ARB_TO_ETH relay handler stopped"),
-        _ = h6 => println!("ARB_TO_GNOSIS relay handler stopped"),
-        _ = h7 => println!("AMB relay handler stopped"),
-        _ = h8 => println!("ARB_TO_ETH claim finder stopped"),
-        _ = h9 => println!("ARB_TO_GNOSIS claim finder stopped"),
-        _ = h10 => println!("ARB_TO_ETH verification handler stopped"),
-        _ = h11 => println!("ARB_TO_GNOSIS verification handler stopped"),
+        _ = h4 => println!("ARB_TO_ETH relay handler stopped"),
+        _ = h5 => println!("ARB_TO_GNOSIS relay handler stopped"),
+        _ = h6 => println!("ARB_TO_ETH claim finder stopped"),
+        _ = h7 => println!("ARB_TO_GNOSIS claim finder stopped"),
+        _ = h8 => println!("ARB_TO_ETH verification handler stopped"),
+        _ = h9 => println!("ARB_TO_GNOSIS verification handler stopped"),
         _ = tokio::signal::ctrl_c() => println!("\nShutting down..."),
     }
 

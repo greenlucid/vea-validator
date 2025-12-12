@@ -7,15 +7,13 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use tokio::time::{timeout, Duration};
 use vea_validator::{
-    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToGnosis, IOutbox, IAMB, IWETH, Claim, Party},
+    contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToGnosis, IOutbox, IWETH, Claim, Party},
     config::ValidatorConfig,
     l2_to_l1_finder::L2ToL1Finder,
     arb_relay_handler::ArbRelayHandler,
     claim_finder::ClaimFinder,
     verification_handler::VerificationHandler,
-    amb_finder::AmbFinder,
-    amb_relay_handler::AmbRelayHandler,
-    scheduler::{ScheduleFile, ScheduleData, ArbToL1Task, VerificationTask, VerificationPhase, AmbTask},
+    scheduler::{ScheduleFile, ScheduleData, ArbToL1Task, VerificationTask, VerificationPhase},
 };
 use common::{restore_pristine, advance_time};
 use alloy::providers::{DynProvider, Provider};
@@ -949,14 +947,14 @@ async fn test_full_arb_to_gnosis_amb_flow() {
 
     let c = ValidatorConfig::from_env().expect("Failed to load config");
     let routes = c.build_routes();
+    let arb_to_eth_route = &routes[0];
     let gnosis_route = &routes[1];
 
     let arb_outbox_address = get_arb_outbox();
 
     let inbox_provider = Arc::new(gnosis_route.inbox_provider.clone());
-    let eth_provider = Arc::new(gnosis_route.router_provider.as_ref().unwrap().clone());
+    let eth_provider = Arc::new(arb_to_eth_route.outbox_provider.clone());
     let gnosis_provider = Arc::new(gnosis_route.outbox_provider.clone());
-    let router_address = gnosis_route.router_address.expect("Gnosis route should have router address");
 
     restore_pristine().await;
 
@@ -1070,7 +1068,7 @@ async fn test_full_arb_to_gnosis_amb_flow() {
 
     let handler = ArbRelayHandler::new(
         gnosis_route.inbox_provider.clone(),
-        gnosis_route.router_provider.as_ref().unwrap().clone(),
+        arb_to_eth_route.outbox_provider.clone(),
         arb_outbox_address,
         &l2_schedule_path,
     );
@@ -1081,66 +1079,10 @@ async fn test_full_arb_to_gnosis_amb_flow() {
     assert!(is_spent_after, "Position SHOULD be spent after relay");
     println!("Phase 7: ArbRelayHandler executed - position {:#x} is spent", l2_task.position);
 
-    for _ in 0..10 {
-        advance_time(12).await;
-    }
-
-    let amb_schedule_path = tmp_dir.path().join("amb.json");
-
-    let amb_finder = AmbFinder::new(
-        gnosis_route.router_provider.as_ref().unwrap().clone(),
-        router_address,
-        &amb_schedule_path,
-    );
-
-    let amb_finder_handle = tokio::spawn(async move {
-        amb_finder.run().await;
-    });
-
-    let amb_task = timeout(Duration::from_secs(30), async {
-        loop {
-            let schedule_file: ScheduleFile<AmbTask> = ScheduleFile::new(&amb_schedule_path);
-            let schedule = schedule_file.load();
-            if !schedule.pending.is_empty() {
-                return schedule.pending[0].clone();
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }).await.expect("AmbFinder should discover Routed event");
-
-    amb_finder_handle.abort();
-    println!("Phase 8: AmbFinder discovered Routed event - epoch {}, ticket_id {:#x}", amb_task.epoch, amb_task.ticket_id);
-
-    assert_eq!(amb_task.epoch, target_epoch, "AMB task epoch should match");
-    assert!(amb_task.ticket_id != FixedBytes::<32>::ZERO, "Ticket ID should not be zero");
-
-    let gnosis_amb = gnosis_route.amb_address.expect("Gnosis route should have AMB address");
-    let amb = IAMB::new(gnosis_amb, gnosis_provider.clone());
-
-    let is_executed_before = amb.messageCallStatus(amb_task.ticket_id).call().await.unwrap();
-    assert!(!is_executed_before, "AMB message should NOT be executed yet");
-
-    let amb_handler = AmbRelayHandler::new(
-        gnosis_route.outbox_provider.clone(),
-        gnosis_amb,
-        &amb_schedule_path,
-    );
-
-    amb_handler.process_pending().await;
-
-    let is_executed_after = amb.messageCallStatus(amb_task.ticket_id).call().await.unwrap();
-    assert!(is_executed_after, "AMB message SHOULD be executed after AmbRelayHandler");
-    println!("Phase 9: AmbRelayHandler executed AMB message - ticket_id {:#x} is now executed", amb_task.ticket_id);
-
-    let amb_schedule_after: ScheduleData<AmbTask> = ScheduleFile::new(&amb_schedule_path).load();
-    assert!(amb_schedule_after.pending.is_empty(), "AMB schedule should be empty after successful relay");
-
-    println!("\nFULL ARB TO GNOSIS AMB FLOW TEST PASSED!");
+    println!("\nARB TO GNOSIS RELAY FLOW TEST PASSED!");
     println!("Successfully verified:");
     println!("  1. sendSnapshot emits L2ToL1Tx");
     println!("  2. L2ToL1Finder discovers the task");
     println!("  3. ArbRelayHandler executes via Arbitrum outbox");
-    println!("  4. Router.route() is called, emits Routed event");
-    println!("  5. AmbFinder discovers the Routed event");
-    println!("  6. AmbRelayHandler executes the AMB message");
+    println!("  4. Router.route() is called (AMB relay to Gnosis is handled by AMB validators)");
 }
