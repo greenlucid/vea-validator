@@ -7,9 +7,9 @@ use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use vea_validator::{
     contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth},
-    claim_handler::ClaimHandler,
     config::ValidatorConfig,
     epoch_watcher::EpochWatcher,
+    tasks,
 };
 use common::{restore_pristine, advance_time};
 use alloy::providers::Provider;
@@ -47,9 +47,14 @@ async fn test_epoch_watcher_saves_snapshot_before_epoch_ends() {
 
     println!("Current epoch: {}, messages sent, no snapshot yet", current_epoch);
 
-    let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.default_signer().address()));
-
-    let epoch_watcher = EpochWatcher::new(route.inbox_provider.clone(), claim_handler.clone(), "TEST", true);
+    let epoch_watcher = EpochWatcher::new(
+        route.inbox_provider.clone(),
+        route.inbox_address,
+        route.outbox_provider.clone(),
+        route.outbox_address,
+        "TEST",
+        true,
+    );
     let watcher_handle = tokio::spawn(async move {
         epoch_watcher.watch_epochs(epoch_period).await
     });
@@ -134,9 +139,14 @@ async fn test_epoch_watcher_after_epoch_verifies_claim() {
     let initial_claim_hash = outbox.claimHashes(U256::from(target_epoch)).call().await.unwrap();
     assert_eq!(initial_claim_hash, FixedBytes::<32>::ZERO, "Claim should not exist yet");
 
-    let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.default_signer().address()));
-
-    let epoch_watcher = EpochWatcher::new(route.inbox_provider.clone(), claim_handler.clone(), "TEST", true);
+    let epoch_watcher = EpochWatcher::new(
+        route.inbox_provider.clone(),
+        route.inbox_address,
+        route.outbox_provider.clone(),
+        route.outbox_address,
+        "TEST",
+        true,
+    );
     let watcher_handle = tokio::spawn(async move {
         epoch_watcher.watch_epochs(epoch_period).await
     });
@@ -196,9 +206,14 @@ async fn test_epoch_watcher_no_duplicate_save_snapshot() {
     let snapshot_before = inbox.snapshots(U256::from(current_epoch)).call().await.unwrap();
     println!("Snapshot already exists for epoch {}: {:?}", current_epoch, snapshot_before);
 
-    let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.default_signer().address()));
-
-    let epoch_watcher = EpochWatcher::new(route.inbox_provider.clone(), claim_handler.clone(), "TEST", true);
+    let epoch_watcher = EpochWatcher::new(
+        route.inbox_provider.clone(),
+        route.inbox_address,
+        route.outbox_provider.clone(),
+        route.outbox_address,
+        "TEST",
+        true,
+    );
     let watcher_handle = tokio::spawn(async move {
         epoch_watcher.watch_epochs(epoch_period).await
     });
@@ -279,10 +294,15 @@ async fn test_race_condition_claim_already_made() {
 
     println!("Claim already exists on-chain");
 
-    let claim_handler = Arc::new(ClaimHandler::new(route.clone(), c.wallet.default_signer().address()));
-
     println!("Our validator attempts to claim (should fail gracefully)...");
-    let result = claim_handler.handle_after_epoch_start(target_epoch).await;
+    let result = tasks::claim::execute(
+        route.inbox_provider.clone(),
+        route.inbox_address,
+        route.outbox_provider.clone(),
+        route.outbox_address,
+        target_epoch,
+        "TEST",
+    ).await;
 
     match result {
         Err(e) => {

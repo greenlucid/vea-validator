@@ -1,27 +1,43 @@
+use alloy::primitives::Address;
 use alloy::providers::{Provider, DynProvider};
 use alloy::network::Ethereum;
 use tokio::time::{sleep, Duration};
-use std::sync::Arc;
-use std::error::Error;
-use crate::claim_handler::ClaimHandler;
+
+use crate::tasks;
 
 const BEFORE_EPOCH_BUFFER: u64 = 60;
 const AFTER_EPOCH_BUFFER: u64 = 15 * 60;
 
 pub struct EpochWatcher {
-    provider: DynProvider<Ethereum>,
-    handler: Arc<ClaimHandler>,
+    inbox_provider: DynProvider<Ethereum>,
+    inbox_address: Address,
+    outbox_provider: DynProvider<Ethereum>,
+    outbox_address: Address,
     route_name: &'static str,
     make_claims: bool,
 }
 
 impl EpochWatcher {
-    pub fn new(provider: DynProvider<Ethereum>, handler: Arc<ClaimHandler>, route_name: &'static str, make_claims: bool) -> Self {
-        Self { provider, handler, route_name, make_claims }
+    pub fn new(
+        inbox_provider: DynProvider<Ethereum>,
+        inbox_address: Address,
+        outbox_provider: DynProvider<Ethereum>,
+        outbox_address: Address,
+        route_name: &'static str,
+        make_claims: bool,
+    ) -> Self {
+        Self {
+            inbox_provider,
+            inbox_address,
+            outbox_provider,
+            outbox_address,
+            route_name,
+            make_claims,
+        }
     }
 
     async fn get_current_timestamp(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        let block = self.provider.get_block_by_number(Default::default()).await?.unwrap();
+        let block = self.inbox_provider.get_block_by_number(Default::default()).await?.unwrap();
         Ok(block.header.timestamp)
     }
 
@@ -37,8 +53,13 @@ impl EpochWatcher {
             println!("[{}] Poll: epoch={}, time_until_next={}, last_before={:?}", self.route_name, current_epoch, time_until_next_epoch, last_before_epoch);
 
             if time_until_next_epoch <= BEFORE_EPOCH_BUFFER && last_before_epoch != Some(current_epoch) {
-                println!("[{}] Triggering handle_epoch_end for epoch {}", self.route_name, current_epoch);
-                self.handler.handle_epoch_end(current_epoch).await
+                println!("[{}] Triggering saveSnapshot for epoch {}", self.route_name, current_epoch);
+                tasks::save_snapshot::execute(
+                    self.inbox_provider.clone(),
+                    self.inbox_address,
+                    current_epoch,
+                    self.route_name,
+                ).await
                     .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to save snapshot for epoch {}: {}", self.route_name, current_epoch, e));
                 last_before_epoch = Some(current_epoch);
             }
@@ -48,8 +69,16 @@ impl EpochWatcher {
                 if time_since_epoch_start >= AFTER_EPOCH_BUFFER && current_epoch > 0 {
                     let prev_epoch = current_epoch - 1;
                     if last_after_epoch != Some(prev_epoch) {
-                        self.handler.handle_after_epoch_start(prev_epoch).await
-                            .unwrap_or_else(|e: Box<dyn Error + Send + Sync + 'static>| panic!("[{}] FATAL: Failed to handle after epoch start for epoch {}: {}", self.route_name, prev_epoch, e));
+                        println!("[{}] Triggering claim for epoch {}", self.route_name, prev_epoch);
+                        tasks::claim::execute(
+                            self.inbox_provider.clone(),
+                            self.inbox_address,
+                            self.outbox_provider.clone(),
+                            self.outbox_address,
+                            prev_epoch,
+                            self.route_name,
+                        ).await
+                            .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle claim for epoch {}: {}", self.route_name, prev_epoch, e));
                         last_after_epoch = Some(prev_epoch);
                     }
                 }

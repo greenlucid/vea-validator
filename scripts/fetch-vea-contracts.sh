@@ -32,4 +32,10 @@ echo "📁 Contents:"
 ls -la
 
 cd ../..
+
+echo "📝 Copying custom test contracts..."
+cp test-contracts/ArbSysMockForValidator.sol contracts/src/test/bridge-mocks/arbitrum/
+cp test-contracts/NodeInterfaceMock.sol contracts/src/test/bridge-mocks/arbitrum/
+cp test-contracts/OutboxMock.sol contracts/src/test/bridge-mocks/arbitrum/
+
 echo "🎉 Done!"

@@ -1,16 +1,12 @@
 use alloy::signers::local::PrivateKeySigner;
 use alloy::network::EthereumWallet;
 use std::str::FromStr;
-use std::sync::Arc;
 use vea_validator::{
     epoch_watcher::EpochWatcher,
-    claim_handler::ClaimHandler,
+    indexer::EventIndexer,
+    tasks::dispatcher::TaskDispatcher,
     contracts::IVeaInboxArbToEth,
     config::ValidatorConfig,
-    l2_to_l1_finder::L2ToL1Finder,
-    arb_relay_handler::ArbRelayHandler,
-    claim_finder::ClaimFinder,
-    verification_handler::VerificationHandler,
     startup::{check_rpc_health, check_balances},
 };
 
@@ -32,120 +28,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let inbox_contract = IVeaInboxArbToEth::new(arb_to_eth_route.inbox_address, arb_to_eth_route.inbox_provider.clone());
     let epoch_period: u64 = inbox_contract.epochPeriod().call().await?.try_into()?;
 
-    let arb_to_eth_claim_handler = Arc::new(ClaimHandler::new(arb_to_eth_route.clone(), wallet_address));
-    let arb_to_gnosis_claim_handler = Arc::new(ClaimHandler::new(arb_to_gnosis_route.clone(), wallet_address));
-
     let arb_to_eth_epoch_watcher = EpochWatcher::new(
         arb_to_eth_route.inbox_provider.clone(),
-        arb_to_eth_claim_handler.clone(),
+        arb_to_eth_route.inbox_address,
+        arb_to_eth_route.outbox_provider.clone(),
+        arb_to_eth_route.outbox_address,
         "ARB_TO_ETH",
         c.make_claims,
     );
     let arb_to_gnosis_epoch_watcher = EpochWatcher::new(
         arb_to_gnosis_route.inbox_provider.clone(),
-        arb_to_gnosis_claim_handler.clone(),
+        arb_to_gnosis_route.inbox_address,
+        arb_to_gnosis_route.outbox_provider.clone(),
+        arb_to_gnosis_route.outbox_address,
         "ARB_TO_GNOSIS",
         c.make_claims,
     );
 
-    let arb_to_eth_l2_to_l1_finder = L2ToL1Finder::new(
-        arb_to_eth_route.inbox_provider.clone(),
-        arb_to_eth_route.inbox_address,
-        "schedules/arb_to_eth_relay.json",
-        "ARB_TO_ETH",
-    );
-
-    let arb_to_gnosis_l2_to_l1_finder = L2ToL1Finder::new(
-        arb_to_gnosis_route.inbox_provider.clone(),
-        arb_to_gnosis_route.inbox_address,
-        "schedules/arb_to_gnosis_relay.json",
-        "ARB_TO_GNOSIS",
-    );
-
-    let arb_to_eth_relay_handler = ArbRelayHandler::new(
-        arb_to_eth_route.inbox_provider.clone(),
-        arb_to_eth_route.outbox_provider.clone(),
-        c.arb_outbox,
-        "schedules/arb_to_eth_relay.json",
-    );
-
-    let arb_to_gnosis_relay_handler = ArbRelayHandler::new(
-        arb_to_gnosis_route.inbox_provider.clone(),
-        arb_to_eth_route.outbox_provider.clone(),
-        c.arb_outbox,
-        "schedules/arb_to_gnosis_relay.json",
-    );
-
-    let arb_to_eth_claim_finder = ClaimFinder::new(
-        arb_to_eth_route.inbox_provider.clone(),
-        arb_to_eth_route.outbox_provider.clone(),
-        arb_to_eth_route.inbox_address,
-        arb_to_eth_route.outbox_address,
-        None,
-        "schedules/arb_to_eth_verification.json",
-        "schedules/arb_to_eth_claims.json",
-        "ARB_TO_ETH",
-    );
-
-    let arb_to_gnosis_claim_finder = ClaimFinder::new(
-        arb_to_gnosis_route.inbox_provider.clone(),
-        arb_to_gnosis_route.outbox_provider.clone(),
-        arb_to_gnosis_route.inbox_address,
-        arb_to_gnosis_route.outbox_address,
-        arb_to_gnosis_route.weth_address,
-        "schedules/arb_to_gnosis_verification.json",
-        "schedules/arb_to_gnosis_claims.json",
-        "ARB_TO_GNOSIS",
-    );
-
-    let arb_to_eth_verification_handler = VerificationHandler::new(
+    let arb_to_eth_indexer = EventIndexer::new(
         arb_to_eth_route.inbox_provider.clone(),
         arb_to_eth_route.inbox_address,
         arb_to_eth_route.outbox_provider.clone(),
         arb_to_eth_route.outbox_address,
-        None,
-        wallet_address,
-        "schedules/arb_to_eth_verification.json",
+        arb_to_eth_route.weth_address,
+        "schedules/arb_to_eth.json",
         "ARB_TO_ETH",
     );
-
-    let arb_to_gnosis_verification_handler = VerificationHandler::new(
+    let arb_to_gnosis_indexer = EventIndexer::new(
         arb_to_gnosis_route.inbox_provider.clone(),
         arb_to_gnosis_route.inbox_address,
         arb_to_gnosis_route.outbox_provider.clone(),
         arb_to_gnosis_route.outbox_address,
         arb_to_gnosis_route.weth_address,
+        "schedules/arb_to_gnosis.json",
+        "ARB_TO_GNOSIS",
+    );
+
+    let arb_to_eth_dispatcher = TaskDispatcher::new(
+        arb_to_eth_route.inbox_provider.clone(),
+        arb_to_eth_route.inbox_address,
+        arb_to_eth_route.outbox_provider.clone(),
+        arb_to_eth_route.outbox_address,
+        c.arb_outbox,
+        arb_to_eth_route.weth_address,
         wallet_address,
-        "schedules/arb_to_gnosis_verification.json",
+        "schedules/arb_to_eth.json",
+        "ARB_TO_ETH",
+    );
+    let arb_to_gnosis_dispatcher = TaskDispatcher::new(
+        arb_to_gnosis_route.inbox_provider.clone(),
+        arb_to_gnosis_route.inbox_address,
+        arb_to_gnosis_route.outbox_provider.clone(),
+        arb_to_gnosis_route.outbox_address,
+        c.arb_outbox,
+        arb_to_gnosis_route.weth_address,
+        wallet_address,
+        "schedules/arb_to_gnosis.json",
         "ARB_TO_GNOSIS",
     );
 
     println!("[ARB_TO_ETH] Inbox: {:?}, Outbox: {:?}", arb_to_eth_route.inbox_address, arb_to_eth_route.outbox_address);
     println!("[ARB_TO_GNOSIS] Inbox: {:?}, Outbox: {:?}", arb_to_gnosis_route.inbox_address, arb_to_gnosis_route.outbox_address);
-    println!("Starting all handlers...");
+    println!("Starting all handlers (3 threads per route)...");
 
     let h1 = tokio::spawn(async move { let _ = arb_to_eth_epoch_watcher.watch_epochs(epoch_period).await; });
-    let h2 = tokio::spawn(async move { let _ = arb_to_gnosis_epoch_watcher.watch_epochs(epoch_period).await; });
-    let h3 = tokio::spawn(async move { arb_to_eth_l2_to_l1_finder.run().await });
-    let h4 = tokio::spawn(async move { arb_to_gnosis_l2_to_l1_finder.run().await });
-    let h5 = tokio::spawn(async move { arb_to_eth_relay_handler.run().await });
-    let h6 = tokio::spawn(async move { arb_to_gnosis_relay_handler.run().await });
-    let h7 = tokio::spawn(async move { arb_to_eth_claim_finder.run().await });
-    let h8 = tokio::spawn(async move { arb_to_gnosis_claim_finder.run().await });
-    let h9 = tokio::spawn(async move { arb_to_eth_verification_handler.run().await });
-    let h10 = tokio::spawn(async move { arb_to_gnosis_verification_handler.run().await });
+    let h2 = tokio::spawn(async move { arb_to_eth_indexer.run().await });
+    let h3 = tokio::spawn(async move { arb_to_eth_dispatcher.run().await });
+
+    let h4 = tokio::spawn(async move { let _ = arb_to_gnosis_epoch_watcher.watch_epochs(epoch_period).await; });
+    let h5 = tokio::spawn(async move { arb_to_gnosis_indexer.run().await });
+    let h6 = tokio::spawn(async move { arb_to_gnosis_dispatcher.run().await });
 
     tokio::select! {
         _ = h1 => println!("ARB_TO_ETH epoch watcher stopped"),
-        _ = h2 => println!("ARB_TO_GNOSIS epoch watcher stopped"),
-        _ = h3 => println!("ARB_TO_ETH L2ToL1 finder stopped"),
-        _ = h4 => println!("ARB_TO_GNOSIS L2ToL1 finder stopped"),
-        _ = h5 => println!("ARB_TO_ETH relay handler stopped"),
-        _ = h6 => println!("ARB_TO_GNOSIS relay handler stopped"),
-        _ = h7 => println!("ARB_TO_ETH claim finder stopped"),
-        _ = h8 => println!("ARB_TO_GNOSIS claim finder stopped"),
-        _ = h9 => println!("ARB_TO_ETH verification handler stopped"),
-        _ = h10 => println!("ARB_TO_GNOSIS verification handler stopped"),
+        _ = h2 => println!("ARB_TO_ETH indexer stopped"),
+        _ = h3 => println!("ARB_TO_ETH dispatcher stopped"),
+        _ = h4 => println!("ARB_TO_GNOSIS epoch watcher stopped"),
+        _ = h5 => println!("ARB_TO_GNOSIS indexer stopped"),
+        _ = h6 => println!("ARB_TO_GNOSIS dispatcher stopped"),
         _ = tokio::signal::ctrl_c() => println!("\nShutting down..."),
     }
 

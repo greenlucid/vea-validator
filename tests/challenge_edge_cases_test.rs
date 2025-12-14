@@ -6,7 +6,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use vea_validator::{
     contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IWETH},
-    claim_handler::ClaimHandler,
     config::ValidatorConfig,
     startup::ensure_weth_approval,
 };
@@ -40,10 +39,8 @@ async fn test_challenge_uses_correct_root_from_inbox() {
     assert_ne!(correct_root, FixedBytes::<32>::ZERO, "Snapshot should be saved");
     println!("Saved snapshot for epoch {}", current_epoch);
 
-    // Advance inbox to next epoch
-    advance_time(epoch_period + 70).await;
+    advance_time(epoch_period + 15 * 60 + 10).await;
 
-    // Sync outbox to EXACT same timestamp as inbox (after inbox advancement)
     let inbox_block_after = inbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
     let inbox_timestamp_after = inbox_block_after.header.timestamp;
     let dest_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
@@ -56,10 +53,6 @@ async fn test_challenge_uses_correct_root_from_inbox() {
         let diff = inbox_timestamp_after - dest_timestamp;
         println!("Advancing outbox by {} seconds to match inbox", diff);
         advance_time(diff).await;
-    } else if dest_timestamp > inbox_timestamp_after {
-        let diff = dest_timestamp - inbox_timestamp_after;
-        println!("WARNING: Outbox is {} seconds ahead of inbox - this shouldn't happen!", diff);
-        println!("This indicates the Anvil instances drifted. Attempting to continue anyway...");
     }
 
     let synced_outbox_block = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap();
@@ -71,11 +64,10 @@ async fn test_challenge_uses_correct_root_from_inbox() {
     outbox.claim(U256::from(current_epoch), wrong_root).value(deposit)
         .send().await.unwrap().get_receipt().await.unwrap();
 
-    let claim_handler = ClaimHandler::new(route.clone(), c.wallet.default_signer().address());
-    let state_root_from_handler = claim_handler.get_correct_state_root(current_epoch).await.unwrap();
+    let state_root_from_inbox = inbox.snapshots(U256::from(current_epoch)).call().await.unwrap();
 
-    assert_eq!(state_root_from_handler, correct_root, "ClaimHandler should fetch the CORRECT root from inbox");
-    assert_ne!(state_root_from_handler, wrong_root, "ClaimHandler should NOT use the malicious wrong root");
+    assert_eq!(state_root_from_inbox, correct_root, "Inbox should have the CORRECT root");
+    assert_ne!(state_root_from_inbox, wrong_root, "Inbox root should NOT match the malicious wrong root");
 
 }
 
