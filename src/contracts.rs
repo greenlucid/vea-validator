@@ -58,6 +58,8 @@ sol! {
 
         function startVerification(uint256 _epoch, Claim memory _claim) external;
         function verifySnapshot(uint256 _epoch, Claim memory _claim) external;
+        function withdrawClaimDeposit(uint256 _epoch, Claim memory _claim) external;
+        function withdrawChallengeDeposit(uint256 _epoch, Claim memory _claim) external;
         function deposit() external view returns (uint256);
         function claimHashes(uint256 epoch) external view returns (bytes32);
         function epochPeriod() external view returns (uint256);
@@ -77,6 +79,7 @@ sol! {
         function startVerification(uint256 _epoch, Claim memory _claim) external;
         function verifySnapshot(uint256 _epoch, Claim memory _claim) external;
         function withdrawClaimDeposit(uint256 _epoch, Claim memory _claim) external;
+        function withdrawChallengeDeposit(uint256 _epoch, Claim memory _claim) external;
         function deposit() external view returns (uint256);
         function epochPeriod() external view returns (uint256);
         function claimHashes(uint256 epoch) external view returns (bytes32);
@@ -118,6 +121,7 @@ sol! {
         function startVerification(uint256 _epoch, Claim memory _claim) external;
         function verifySnapshot(uint256 _epoch, Claim memory _claim) external;
         function withdrawClaimDeposit(uint256 _epoch, Claim memory _claim) external;
+        function withdrawChallengeDeposit(uint256 _epoch, Claim memory _claim) external;
         function deposit() external view returns (uint256);
         function epochPeriod() external view returns (uint256);
         function claimHashes(uint256 epoch) external view returns (bytes32);

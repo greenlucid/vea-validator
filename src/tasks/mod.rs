@@ -7,6 +7,7 @@ pub mod send_snapshot;
 pub mod start_verification;
 pub mod verify_snapshot;
 pub mod execute_relay;
+pub mod withdraw_deposit;
 
 use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::contract::Error as ContractError;
@@ -15,6 +16,8 @@ use alloy::providers::PendingTransactionBuilder;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+use crate::contracts::{Claim, Party};
 
 pub async fn send_tx(
     result: Result<PendingTransactionBuilder<Ethereum>, ContractError>,
@@ -59,40 +62,22 @@ pub enum Task {
     VerifyClaim {
         epoch: u64,
         execute_after: u64,
-        state_root: FixedBytes<32>,
-        claimer: Address,
-        timestamp_claimed: u32,
     },
     Challenge {
         epoch: u64,
         execute_after: u64,
-        state_root: FixedBytes<32>,
-        claimer: Address,
-        timestamp_claimed: u32,
     },
     SendSnapshot {
         epoch: u64,
         execute_after: u64,
-        state_root: FixedBytes<32>,
-        claimer: Address,
-        timestamp_claimed: u32,
-        challenger: Address,
     },
     StartVerification {
         epoch: u64,
         execute_after: u64,
-        state_root: FixedBytes<32>,
-        claimer: Address,
-        timestamp_claimed: u32,
     },
     VerifySnapshot {
         epoch: u64,
         execute_after: u64,
-        state_root: FixedBytes<32>,
-        claimer: Address,
-        timestamp_claimed: u32,
-        timestamp_verification: u32,
-        blocknumber_verification: u32,
     },
     ExecuteRelay {
         epoch: u64,
@@ -165,6 +150,10 @@ pub struct ClaimData {
     pub state_root: FixedBytes<32>,
     pub claimer: Address,
     pub timestamp_claimed: u32,
+    pub timestamp_verification: u32,
+    pub blocknumber_verification: u32,
+    pub honest: String,
+    pub challenger: Address,
 }
 
 pub struct ClaimStore {
@@ -201,6 +190,21 @@ impl ClaimStore {
         self.save_all(&claims);
     }
 
+    pub fn update<F>(&self, epoch: u64, f: F)
+    where
+        F: FnOnce(&mut ClaimData),
+    {
+        let mut claims = self.load_all();
+        let claim = claims.iter_mut().find(|c| c.epoch == epoch);
+        match claim {
+            Some(c) => {
+                f(c);
+                self.save_all(&claims);
+            }
+            None => panic!("Cannot update claim for epoch {} - not found", epoch),
+        }
+    }
+
     pub fn get(&self, epoch: u64) -> ClaimData {
         let claims = self.load_all();
         let matches: Vec<_> = claims.into_iter().filter(|c| c.epoch == epoch).collect();
@@ -208,6 +212,23 @@ impl ClaimStore {
             0 => panic!("No claim found for epoch {}", epoch),
             1 => matches.into_iter().next().unwrap(),
             n => panic!("Multiple claims ({}) for epoch {} - impossible state", n, epoch),
+        }
+    }
+
+    pub fn get_claim(&self, epoch: u64) -> Claim {
+        let c = self.get(epoch);
+        Claim {
+            stateRoot: c.state_root,
+            claimer: c.claimer,
+            timestampClaimed: c.timestamp_claimed,
+            timestampVerification: c.timestamp_verification,
+            blocknumberVerification: c.blocknumber_verification,
+            honest: match c.honest.as_str() {
+                "Claimer" => Party::Claimer,
+                "Challenger" => Party::Challenger,
+                _ => Party::None,
+            },
+            challenger: c.challenger,
         }
     }
 

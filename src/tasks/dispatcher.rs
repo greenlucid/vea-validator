@@ -4,7 +4,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::config::{Route, ValidatorConfig};
 use crate::tasks;
-use crate::tasks::{Task, TaskStore};
+use crate::tasks::{Task, TaskStore, ClaimStore};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
@@ -12,6 +12,7 @@ pub struct TaskDispatcher {
     config: ValidatorConfig,
     route: Route,
     task_store: TaskStore,
+    claim_store: ClaimStore,
 }
 
 impl TaskDispatcher {
@@ -19,11 +20,13 @@ impl TaskDispatcher {
         config: ValidatorConfig,
         route: Route,
         schedule_path: impl Into<PathBuf>,
+        claims_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
             config,
             route,
             task_store: TaskStore::new(schedule_path),
+            claim_store: ClaimStore::new(claims_path),
         }
     }
 
@@ -71,55 +74,26 @@ impl TaskDispatcher {
             Task::Claim { epoch, .. } => {
                 tasks::claim::execute(&self.route, *epoch).await.is_ok()
             }
-            Task::VerifyClaim { epoch, state_root, claimer, timestamp_claimed, .. } => {
+            Task::VerifyClaim { epoch, .. } => {
                 tasks::verify_claim::execute(
                     &self.route,
                     *epoch,
-                    *state_root,
-                    *claimer,
-                    *timestamp_claimed,
+                    &self.claim_store,
                     current_timestamp,
                     &self.task_store,
                 ).await.is_ok()
             }
-            Task::Challenge { epoch, state_root, claimer, timestamp_claimed, .. } => {
-                tasks::challenge::execute(
-                    &self.route,
-                    *epoch,
-                    *state_root,
-                    *claimer,
-                    *timestamp_claimed,
-                ).await.is_ok()
+            Task::Challenge { epoch, .. } => {
+                tasks::challenge::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
             }
-            Task::SendSnapshot { epoch, state_root, claimer, timestamp_claimed, challenger, .. } => {
-                tasks::send_snapshot::execute(
-                    &self.route,
-                    *epoch,
-                    *state_root,
-                    *claimer,
-                    *timestamp_claimed,
-                    *challenger,
-                ).await.is_ok()
+            Task::SendSnapshot { epoch, .. } => {
+                tasks::send_snapshot::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
             }
-            Task::StartVerification { epoch, state_root, claimer, timestamp_claimed, .. } => {
-                tasks::start_verification::execute(
-                    &self.route,
-                    *epoch,
-                    *state_root,
-                    *claimer,
-                    *timestamp_claimed,
-                ).await.is_ok()
+            Task::StartVerification { epoch, .. } => {
+                tasks::start_verification::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
             }
-            Task::VerifySnapshot { epoch, state_root, claimer, timestamp_claimed, timestamp_verification, blocknumber_verification, .. } => {
-                tasks::verify_snapshot::execute(
-                    &self.route,
-                    *epoch,
-                    *state_root,
-                    *claimer,
-                    *timestamp_claimed,
-                    *timestamp_verification,
-                    *blocknumber_verification,
-                ).await.is_ok()
+            Task::VerifySnapshot { epoch, .. } => {
+                tasks::verify_snapshot::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
             }
             Task::ExecuteRelay { position, l2_sender, dest_addr, l2_block, l1_block, l2_timestamp, amount, data, .. } => {
                 tasks::execute_relay::execute(

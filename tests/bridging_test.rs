@@ -8,7 +8,7 @@ use vea_validator::{
     config::ValidatorConfig,
     indexer::EventIndexer,
     tasks::dispatcher::TaskDispatcher,
-    tasks,
+    tasks::{self, ClaimStore, ClaimData},
     startup::ensure_weth_approval,
 };
 use std::str::FromStr;
@@ -46,7 +46,20 @@ async fn test_send_snapshot_after_challenge() {
     let claimer = c.wallet.default_signer().address();
     let challenger = Address::from_slice(&[0xCA; 20]);
 
-    tasks::send_snapshot::execute(route, epoch, state_root, claimer, timestamp_claimed, challenger).await.unwrap();
+    let test_dir = tempfile::tempdir().unwrap();
+    let claim_store = ClaimStore::new(test_dir.path().join("claims.json"));
+    claim_store.store(ClaimData {
+        epoch,
+        state_root,
+        claimer,
+        timestamp_claimed,
+        timestamp_verification: 0,
+        blocknumber_verification: 0,
+        honest: "None".to_string(),
+        challenger,
+    });
+
+    tasks::send_snapshot::execute(route, epoch, &claim_store).await.unwrap();
 
     let sig = alloy::primitives::keccak256("SnapshotSent(uint256,bytes32)");
     let filter = alloy::rpc::types::Filter::new().address(route.inbox_address).event_signature(sig).from_block(0u64);
@@ -147,13 +160,15 @@ async fn test_execute_relay() {
         challenger: Address::ZERO,
     };
     outbox.challenge(U256::from(epoch), claim).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
+    let balance_after_challenge = outbox_provider.get_balance(c.wallet.default_signer().address()).await.unwrap();
 
     advance_time(15 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), test_dir.path().join("claims.json"));
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path);
+    let claims_path = test_dir.path().join("claims.json");
+    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path.clone());
 
     indexer.scan_once().await;
 
@@ -168,6 +183,15 @@ async fn test_execute_relay() {
     let filter = alloy::rpc::types::Filter::new().address(route.outbox_address).event_signature(sig).from_block(0u64);
     let logs = outbox_provider.get_logs(&filter).await.unwrap();
     assert!(!logs.is_empty(), "Verified not emitted - resolveDisputedClaim failed");
+
+    advance_time(15 * 60 + 10).await;
+    indexer.scan_once().await;
+
+    let balance_after_withdraw = outbox_provider.get_balance(c.wallet.default_signer().address()).await.unwrap();
+    assert!(balance_after_withdraw > balance_after_challenge, "Deposit was not returned to claimer (honest) after disputed verification");
+
+    let claim_store = vea_validator::tasks::ClaimStore::new(claims_path);
+    assert!(std::panic::catch_unwind(|| claim_store.get(epoch)).is_err(), "Claim should be removed after withdraw");
 }
 
 #[tokio::test]
@@ -208,7 +232,21 @@ async fn test_send_snapshot_gnosis() {
         .await.unwrap().unwrap().header.timestamp as u32;
 
     let challenger = Address::from_slice(&[0xCA; 20]);
-    tasks::send_snapshot::execute(route, epoch, state_root, wallet_address, timestamp_claimed, challenger).await.unwrap();
+
+    let test_dir = tempfile::tempdir().unwrap();
+    let claim_store = ClaimStore::new(test_dir.path().join("claims.json"));
+    claim_store.store(ClaimData {
+        epoch,
+        state_root,
+        claimer: wallet_address,
+        timestamp_claimed,
+        timestamp_verification: 0,
+        blocknumber_verification: 0,
+        honest: "None".to_string(),
+        challenger,
+    });
+
+    tasks::send_snapshot::execute(route, epoch, &claim_store).await.unwrap();
 
     let sig = alloy::primitives::keccak256("SnapshotSent(uint256,bytes32)");
     let filter = alloy::rpc::types::Filter::new().address(route.inbox_address).event_signature(sig).from_block(0u64);
@@ -260,8 +298,9 @@ async fn test_execute_relay_skips_spent() {
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), test_dir.path().join("claims.json"));
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path.clone());
+    let claims_path = test_dir.path().join("claims.json");
+    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path.clone(), claims_path.clone());
 
     indexer.scan_once().await;
     advance_time(15 * 60 + 10).await;
@@ -271,7 +310,7 @@ async fn test_execute_relay_skips_spent() {
     advance_time(relay_delay + 10).await;
     dispatcher.process_pending().await;
 
-    let dispatcher2 = TaskDispatcher::new(c.clone(), route.clone(), schedule_path);
+    let dispatcher2 = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
     dispatcher2.process_pending().await;
 }
 
@@ -308,8 +347,9 @@ async fn test_challenger_wins_bad_claim() {
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), test_dir.path().join("claims.json"));
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path);
+    let claims_path = test_dir.path().join("claims.json");
+    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;

@@ -42,8 +42,9 @@ async fn test_challenge_bad_claim() {
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), test_dir.path().join("claims.json"));
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path);
+    let claims_path = test_dir.path().join("claims.json");
+    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -93,8 +94,9 @@ async fn test_challenge_bad_claim_gnosis() {
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), test_dir.path().join("claims.json"));
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path);
+    let claims_path = test_dir.path().join("claims.json");
+    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;

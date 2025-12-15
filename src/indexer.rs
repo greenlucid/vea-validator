@@ -6,8 +6,8 @@ use std::cmp::min;
 use tokio::time::{sleep, Duration};
 
 use crate::config::Route;
-use crate::contracts::{IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
-use crate::tasks::{Task, TaskStore, ClaimStore, ClaimData, send_snapshot};
+use crate::contracts::{IVeaInbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
+use crate::tasks::{self, Task, TaskStore, ClaimStore, ClaimData, send_snapshot};
 
 const CHUNK_SIZE: u64 = 500;
 const FINALITY_BUFFER_SECS: u64 = 15 * 60;
@@ -115,6 +115,7 @@ impl EventIndexer {
         let claimed_sig = alloy::primitives::keccak256("Claimed(address,uint256,bytes32)");
         let verification_started_sig = alloy::primitives::keccak256("VerificationStarted(uint256)");
         let challenged_sig = alloy::primitives::keccak256("Challenged(uint256,address)");
+        let verified_sig = alloy::primitives::keccak256("Verified(uint256)");
 
         let current_block = match self.route.outbox_provider.get_block_number().await {
             Ok(b) => b,
@@ -142,7 +143,7 @@ impl EventIndexer {
 
         let filter = Filter::new()
             .address(self.route.outbox_address)
-            .event_signature(vec![claimed_sig, verification_started_sig, challenged_sig])
+            .event_signature(vec![claimed_sig, verification_started_sig, challenged_sig, verified_sig])
             .from_block(from_block)
             .to_block(to_block);
 
@@ -165,6 +166,8 @@ impl EventIndexer {
                         self.handle_verification_started_event(&log).await;
                     } else if topic0 == challenged_sig {
                         self.handle_challenged_event(&log).await;
+                    } else if topic0 == verified_sig {
+                        self.handle_verified_event(&log).await;
                     }
                 }
                 self.task_store.update_outbox_block(to_block);
@@ -251,6 +254,10 @@ impl EventIndexer {
             state_root,
             claimer,
             timestamp_claimed,
+            timestamp_verification: 0,
+            blocknumber_verification: 0,
+            honest: "None".to_string(),
+            challenger: Address::ZERO,
         });
 
         println!("[{}][Indexer] Claimed event for epoch {} - scheduling VerifyClaim", self.route.name, epoch);
@@ -258,9 +265,6 @@ impl EventIndexer {
         self.task_store.add_task(Task::VerifyClaim {
             epoch,
             execute_after: now,
-            state_root,
-            claimer,
-            timestamp_claimed,
         });
     }
 
@@ -282,6 +286,11 @@ impl EventIndexer {
         let block_ts = log.block_timestamp.unwrap_or(0) as u32;
         let block_num = log.block_number.unwrap_or(0) as u32;
 
+        self.claim_store.update(epoch, |c| {
+            c.timestamp_verification = block_ts;
+            c.blocknumber_verification = block_num;
+        });
+
         let min_challenge_period = match self.get_min_challenge_period().await {
             Ok(p) => p,
             Err(e) => {
@@ -289,8 +298,6 @@ impl EventIndexer {
                 return;
             }
         };
-
-        let claim = self.claim_store.get(epoch);
 
         let execute_after = (block_ts as u64) + min_challenge_period;
         println!(
@@ -301,11 +308,6 @@ impl EventIndexer {
         state.tasks.push(Task::VerifySnapshot {
             epoch,
             execute_after,
-            state_root: claim.state_root,
-            claimer: claim.claimer,
-            timestamp_claimed: claim.timestamp_claimed,
-            timestamp_verification: block_ts,
-            blocknumber_verification: block_num,
         });
         self.task_store.save(&state);
     }
@@ -318,19 +320,44 @@ impl EventIndexer {
         let epoch = U256::from_be_bytes(log.topics()[1].0).to::<u64>();
         let challenger = Address::from_slice(&log.topics()[2].0[12..]);
 
-        let claim = self.claim_store.get(epoch);
+        self.claim_store.update(epoch, |c| {
+            c.challenger = challenger;
+        });
 
         println!("[{}][Indexer] Challenged event for epoch {} - sending snapshot immediately", self.route.name, epoch);
 
-        if let Err(e) = send_snapshot::execute(
-            &self.route,
-            epoch,
-            claim.state_root,
-            claim.claimer,
-            claim.timestamp_claimed,
-            challenger,
-        ).await {
+        if let Err(e) = send_snapshot::execute(&self.route, epoch, &self.claim_store).await {
             eprintln!("[{}][Indexer] Failed to send snapshot for epoch {}: {}", self.route.name, epoch, e);
+        }
+    }
+
+    async fn handle_verified_event(&self, log: &alloy::rpc::types::Log) {
+        let epoch = if log.topics().len() >= 2 {
+            U256::from_be_bytes(log.topics()[1].0).to::<u64>()
+        } else if log.data().data.len() >= 32 {
+            U256::from_be_slice(&log.data().data[0..32]).to::<u64>()
+        } else {
+            return;
+        };
+
+        let claim = self.claim_store.get(epoch);
+
+        let real_state_root = self.get_inbox_snapshot(epoch).await;
+
+        let honest = if claim.state_root == real_state_root {
+            "Claimer"
+        } else {
+            "Challenger"
+        };
+
+        self.claim_store.update(epoch, |c| {
+            c.honest = honest.to_string();
+        });
+
+        println!("[{}][Indexer] Verified event for epoch {} - {} was honest", self.route.name, epoch, honest);
+
+        if let Err(e) = tasks::withdraw_deposit::execute(&self.route, epoch, &self.claim_store).await {
+            eprintln!("[{}][Indexer] Failed to withdraw deposit for epoch {}: {}", self.route.name, epoch, e);
         }
     }
 
@@ -419,5 +446,10 @@ impl EventIndexer {
             let outbox = IVeaOutboxArbToEth::new(self.route.outbox_address, self.route.outbox_provider.clone());
             Ok(outbox.minChallengePeriod().call().await?.to::<u64>())
         }
+    }
+
+    async fn get_inbox_snapshot(&self, epoch: u64) -> FixedBytes<32> {
+        let inbox = IVeaInbox::new(self.route.inbox_address, self.route.inbox_provider.clone());
+        inbox.snapshots(U256::from(epoch)).call().await.expect("Failed to get inbox snapshot")
     }
 }

@@ -41,11 +41,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         c.clone(),
         arb_to_eth_route.clone(),
         "schedules/arb_to_eth.json",
+        "claims/arb_to_eth.json",
     );
     let arb_to_gnosis_dispatcher = TaskDispatcher::new(
         c.clone(),
         arb_to_gnosis_route.clone(),
         "schedules/arb_to_gnosis.json",
+        "claims/arb_to_gnosis.json",
     );
 
     println!("[ARB_TO_ETH] Inbox: {:?}, Outbox: {:?}", arb_to_eth_route.inbox_address, arb_to_eth_route.outbox_address);
