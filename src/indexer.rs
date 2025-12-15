@@ -7,7 +7,7 @@ use std::cmp::min;
 use tokio::time::{sleep, Duration};
 
 use crate::contracts::{IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
-use crate::tasks::{Task, TaskStore, ClaimStore, ClaimData};
+use crate::tasks::{Task, TaskStore, ClaimStore, ClaimData, send_snapshot};
 
 const CHUNK_SIZE: u64 = 500;
 const FINALITY_BUFFER_SECS: u64 = 15 * 60;
@@ -53,15 +53,19 @@ impl EventIndexer {
 
     pub async fn run(&self) {
         loop {
-            let inbox_done = self.scan_inbox().await;
-            let outbox_done = self.scan_outbox().await;
-
-            if inbox_done && outbox_done {
+            let done = self.scan_once().await;
+            if done {
                 sleep(IDLE_SLEEP).await;
             } else {
                 sleep(CATCHUP_SLEEP).await;
             }
         }
+    }
+
+    pub async fn scan_once(&self) -> bool {
+        let inbox_done = self.scan_inbox().await;
+        let outbox_done = self.scan_outbox().await;
+        inbox_done && outbox_done
     }
 
     async fn scan_inbox(&self) -> bool {
@@ -167,7 +171,7 @@ impl EventIndexer {
                     } else if topic0 == verification_started_sig {
                         self.handle_verification_started_event(&log).await;
                     } else if topic0 == challenged_sig {
-                        self.handle_challenged_event(&log, now).await;
+                        self.handle_challenged_event(&log).await;
                     }
                 }
                 self.task_store.update_outbox_block(to_block);
@@ -313,7 +317,7 @@ impl EventIndexer {
         self.task_store.save(&state);
     }
 
-    async fn handle_challenged_event(&self, log: &alloy::rpc::types::Log, now: u64) {
+    async fn handle_challenged_event(&self, log: &alloy::rpc::types::Log) {
         if log.topics().len() < 3 {
             return;
         }
@@ -323,16 +327,21 @@ impl EventIndexer {
 
         let claim = self.claim_store.get(epoch);
 
-        println!("[{}][Indexer] Challenged event for epoch {} - scheduling sendSnapshot", self.route_name, epoch);
+        println!("[{}][Indexer] Challenged event for epoch {} - sending snapshot immediately", self.route_name, epoch);
 
-        self.task_store.add_task(Task::SendSnapshot {
+        if let Err(e) = send_snapshot::execute(
+            self.inbox_provider.clone(),
+            self.inbox_address,
+            self.weth_address,
             epoch,
-            execute_after: now,
-            state_root: claim.state_root,
-            claimer: claim.claimer,
-            timestamp_claimed: claim.timestamp_claimed,
+            claim.state_root,
+            claim.claimer,
+            claim.timestamp_claimed,
             challenger,
-        });
+            self.route_name,
+        ).await {
+            eprintln!("[{}][Indexer] Failed to send snapshot for epoch {}: {}", self.route_name, epoch, e);
+        }
     }
 
     fn parse_epoch_from_snapshot_sent(&self, log: &alloy::rpc::types::Log) -> Option<u64> {

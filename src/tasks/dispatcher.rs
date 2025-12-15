@@ -106,6 +106,10 @@ impl TaskDispatcher {
                 tasks::verify_claim::execute(
                     self.inbox_provider.clone(),
                     self.inbox_address,
+                    self.outbox_provider.clone(),
+                    self.outbox_address,
+                    self.weth_address,
+                    self.wallet_address,
                     *epoch,
                     *state_root,
                     *claimer,
