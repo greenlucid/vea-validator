@@ -145,7 +145,6 @@ impl TaskDispatcher {
                 tasks::start_verification::execute(
                     self.outbox_provider.clone(),
                     self.outbox_address,
-                    self.weth_address,
                     *epoch,
                     *state_root,
                     *claimer,
@@ -157,7 +156,6 @@ impl TaskDispatcher {
                 tasks::verify_snapshot::execute(
                     self.outbox_provider.clone(),
                     self.outbox_address,
-                    self.weth_address,
                     *epoch,
                     *state_root,
                     *claimer,

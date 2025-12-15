@@ -40,6 +40,21 @@ sol! {
 
     #[derive(Debug)]
     #[sol(rpc)]
+    interface IVeaOutbox {
+        event Claimed(address indexed _claimer, uint256 indexed _epoch, bytes32 indexed _stateRoot);
+        event Challenged(uint256 indexed _epoch, address indexed _challenger);
+        event VerificationStarted(uint256 indexed _epoch);
+        event Verified(uint256 indexed _epoch);
+
+        function startVerification(uint256 _epoch, Claim memory _claim) external;
+        function verifySnapshot(uint256 _epoch, Claim memory _claim) external;
+        function deposit() external view returns (uint256);
+        function claimHashes(uint256 epoch) external view returns (bytes32);
+        function epochPeriod() external view returns (uint256);
+    }
+
+    #[derive(Debug)]
+    #[sol(rpc)]
     interface IVeaOutboxArbToEth {
         event Claimed(address indexed _claimer, uint256 indexed _epoch, bytes32 indexed _stateRoot);
         event Challenged(uint256 indexed _epoch, address indexed _challenger);
