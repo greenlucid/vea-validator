@@ -11,7 +11,6 @@ use crate::tasks::{Task, TaskStore, ClaimStore, ClaimData, send_snapshot};
 
 const CHUNK_SIZE: u64 = 500;
 const FINALITY_BUFFER_SECS: u64 = 15 * 60;
-const FINALITY_BUFFER_BLOCKS: u64 = 20;
 const CATCHUP_SLEEP: Duration = Duration::from_secs(5);
 const IDLE_SLEEP: Duration = Duration::from_secs(5 * 60);
 const RELAY_DELAY: u64 = 7 * 24 * 3600 + 3600;
@@ -56,7 +55,7 @@ impl EventIndexer {
     async fn scan_inbox(&self) -> bool {
         let snapshot_sent_sig = alloy::primitives::keccak256("SnapshotSent(uint256,bytes32)");
 
-        let raw_block = match self.route.inbox_provider.get_block_number().await {
+        let current_block = match self.route.inbox_provider.get_block_number().await {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("[{}][Indexer] Failed to get inbox block number: {}", self.route.name, e);
@@ -64,7 +63,12 @@ impl EventIndexer {
             }
         };
 
-        let current_block = raw_block.saturating_sub(FINALITY_BUFFER_BLOCKS);
+        let current_block_data = match self.route.inbox_provider.get_block_by_number(current_block.into()).await {
+            Ok(Some(b)) => b,
+            _ => return true,
+        };
+        let now = current_block_data.header.timestamp;
+
         let state = self.task_store.load();
         let ten_days_blocks = 10 * 24 * 3600 * 1000 / 250;
         let from_block = state.inbox_last_block.unwrap_or_else(|| current_block.saturating_sub(ten_days_blocks));
@@ -84,6 +88,10 @@ impl EventIndexer {
         match self.route.inbox_provider.get_logs(&filter).await {
             Ok(logs) => {
                 for log in logs {
+                    let block_ts = log.block_timestamp.unwrap_or(0);
+                    if block_ts > now.saturating_sub(FINALITY_BUFFER_SECS) {
+                        continue;
+                    }
                     self.handle_snapshot_sent(&log).await;
                 }
                 self.task_store.update_inbox_block(to_block);

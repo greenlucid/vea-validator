@@ -1,7 +1,20 @@
 pub use alloy::providers::Provider;
 use alloy::providers::ProviderBuilder;
+use alloy::primitives::Address;
+use vea_validator::config::Route;
+use vea_validator::contracts::IVeaInboxArbToEth;
+use std::str::FromStr;
 
 const SNAPSHOT_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/.devnet-snapshot");
+
+pub async fn send_messages(route: &Route) {
+    let inbox = IVeaInboxArbToEth::new(route.inbox_address, route.inbox_provider.clone());
+    for i in 0..3u8 {
+        let msg = alloy::primitives::Bytes::from(vec![0xDE, 0xAD, i]);
+        inbox.sendMessage(Address::from_str("0x0000000000000000000000000000000000000001").unwrap(), msg)
+            .send().await.unwrap().get_receipt().await.unwrap();
+    }
+}
 
 pub async fn restore_pristine() {
     let snapshot_id = std::fs::read_to_string(SNAPSHOT_FILE)
