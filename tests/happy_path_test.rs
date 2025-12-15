@@ -3,13 +3,11 @@ mod common;
 use alloy::primitives::U256;
 use serial_test::serial;
 use std::sync::Arc;
-use alloy::primitives::Address;
 use vea_validator::{
     contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth},
     config::ValidatorConfig,
     indexer::EventIndexer,
     tasks::dispatcher::TaskDispatcher,
-    tasks::{self, ClaimStore, ClaimData},
 };
 use common::{restore_pristine, advance_time, send_messages};
 use alloy::providers::Provider;
@@ -37,29 +35,21 @@ async fn test_start_verification() {
     if target > ts { advance_time(target - ts).await; }
 
     let deposit = outbox.deposit().call().await.unwrap();
-    let claim_receipt = outbox.claim(U256::from(epoch), state_root).value(deposit)
-        .send().await.unwrap().get_receipt().await.unwrap();
-    let timestamp_claimed = outbox_provider.get_block_by_number(claim_receipt.block_number.unwrap().into())
-        .await.unwrap().unwrap().header.timestamp as u32;
+    outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(25 * 3600 + 10).await;
-
-    let claimer = c.wallet.default_signer().address();
+    advance_time(15 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
-    let claim_store = ClaimStore::new(test_dir.path().join("claims.json"));
-    claim_store.store(ClaimData {
-        epoch,
-        state_root,
-        claimer,
-        timestamp_claimed,
-        timestamp_verification: 0,
-        blocknumber_verification: 0,
-        honest: "None".to_string(),
-        challenger: Address::ZERO,
-    });
+    let schedule_path = test_dir.path().join("schedule.json");
+    let claims_path = test_dir.path().join("claims.json");
+    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
 
-    tasks::start_verification::execute(route, epoch, &claim_store).await.unwrap();
+    indexer.scan_once().await;
+    dispatcher.process_pending().await;
+
+    advance_time(25 * 3600 + 10).await;
+    dispatcher.process_pending().await;
 
     let sig = alloy::primitives::keccak256("VerificationStarted(uint256)");
     let filter = alloy::rpc::types::Filter::new().address(route.outbox_address).event_signature(sig).from_block(0u64);
@@ -91,42 +81,28 @@ async fn test_verify_snapshot() {
     if target > ts { advance_time(target - ts).await; }
 
     let deposit = outbox.deposit().call().await.unwrap();
-    let claim_receipt = outbox.claim(U256::from(epoch), state_root).value(deposit)
-        .send().await.unwrap().get_receipt().await.unwrap();
-    let timestamp_claimed = outbox_provider.get_block_by_number(claim_receipt.block_number.unwrap().into())
-        .await.unwrap().unwrap().header.timestamp as u32;
+    outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(25 * 3600 + 10).await;
-
-    let claimer = c.wallet.default_signer().address();
+    advance_time(15 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
-    let claim_store = ClaimStore::new(test_dir.path().join("claims.json"));
-    claim_store.store(ClaimData {
-        epoch,
-        state_root,
-        claimer,
-        timestamp_claimed,
-        timestamp_verification: 0,
-        blocknumber_verification: 0,
-        honest: "None".to_string(),
-        challenger: Address::ZERO,
-    });
+    let schedule_path = test_dir.path().join("schedule.json");
+    let claims_path = test_dir.path().join("claims.json");
+    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
 
-    tasks::start_verification::execute(route, epoch, &claim_store).await.unwrap();
+    indexer.scan_once().await;
+    dispatcher.process_pending().await;
 
-    let start_block = outbox_provider.get_block_number().await.unwrap();
-    let start_ts = outbox_provider.get_block_by_number(start_block.into()).await.unwrap().unwrap().header.timestamp as u32;
+    advance_time(25 * 3600 + 10).await;
+    dispatcher.process_pending().await;
 
-    claim_store.update(epoch, |c| {
-        c.timestamp_verification = start_ts;
-        c.blocknumber_verification = start_block as u32;
-    });
+    advance_time(15 * 60 + 10).await;
+    indexer.scan_once().await;
 
     let min_challenge = outbox.minChallengePeriod().call().await.unwrap().to::<u64>();
     advance_time(min_challenge + 10).await;
-
-    tasks::verify_snapshot::execute(route, epoch, &claim_store).await.unwrap();
+    dispatcher.process_pending().await;
 
     let sig = alloy::primitives::keccak256("Verified(uint256)");
     let filter = alloy::rpc::types::Filter::new().address(route.outbox_address).event_signature(sig).from_block(0u64);
