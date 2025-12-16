@@ -9,12 +9,26 @@ use crate::config::Route;
 use crate::contracts::{IVeaInbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
 use crate::tasks::{self, Task, TaskKind, TaskStore, ClaimStore, ClaimData, send_snapshot};
 
+use alloy::network::Ethereum;
+use alloy::providers::DynProvider;
+
 const CHUNK_SIZE: u64 = 500;
 const FINALITY_BUFFER_SECS: u64 = 15 * 60;
 const CATCHUP_SLEEP: Duration = Duration::from_secs(5);
 const IDLE_SLEEP: Duration = Duration::from_secs(5 * 60);
 const RELAY_DELAY: u64 = 7 * 24 * 3600 + 3600;
 const ARB_SYS: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x64]);
+
+async fn get_log_timestamp(log: &alloy::rpc::types::Log, provider: &DynProvider<Ethereum>) -> u64 {
+    if let Some(ts) = log.block_timestamp {
+        return ts;
+    }
+    let block_num = log.block_number.expect("Log missing block_number");
+    let block = provider.get_block_by_number(block_num.into()).await
+        .expect("Failed to fetch block for timestamp")
+        .expect("Block not found");
+    block.header.timestamp
+}
 
 pub struct EventIndexer {
     route: Route,
@@ -87,7 +101,7 @@ impl EventIndexer {
         match self.route.inbox_provider.get_logs(&filter).await {
             Ok(logs) => {
                 for log in logs {
-                    let block_ts = log.block_timestamp.expect("Log missing block_timestamp");
+                    let block_ts = get_log_timestamp(&log, &self.route.inbox_provider).await;
                     if block_ts > now.saturating_sub(FINALITY_BUFFER_SECS) {
                         continue;
                     }
@@ -148,7 +162,7 @@ impl EventIndexer {
         match self.route.outbox_provider.get_logs(&filter).await {
             Ok(logs) => {
                 for log in logs {
-                    let block_ts = log.block_timestamp.expect("Log missing block_timestamp");
+                    let block_ts = get_log_timestamp(&log, &self.route.outbox_provider).await;
                     if block_ts > now.saturating_sub(FINALITY_BUFFER_SECS) {
                         continue;
                     }
@@ -241,7 +255,7 @@ impl EventIndexer {
         }
         let state_root = FixedBytes::<32>::from_slice(&log.data().data[0..32]);
 
-        let block_ts = log.block_timestamp.expect("Log missing block_timestamp");
+        let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
         let timestamp_claimed = block_ts as u32;
 
         let state = self.task_store.load();
@@ -284,7 +298,7 @@ impl EventIndexer {
             return;
         }
 
-        let block_ts = log.block_timestamp.expect("Log missing block_timestamp") as u32;
+        let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await as u32;
         let block_num = log.block_number.expect("Log missing block_number") as u32;
 
         self.claim_store.update(epoch, |c| {
