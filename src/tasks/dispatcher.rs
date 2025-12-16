@@ -4,7 +4,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::config::{Route, ValidatorConfig};
 use crate::tasks;
-use crate::tasks::{Task, TaskStore, ClaimStore};
+use crate::tasks::{Task, TaskKind, TaskStore, ClaimStore};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
@@ -48,7 +48,7 @@ impl TaskDispatcher {
         let ready: Vec<Task> = state
             .tasks
             .iter()
-            .filter(|t| now >= t.execute_after())
+            .filter(|t| now >= t.execute_after)
             .cloned()
             .collect();
 
@@ -67,35 +67,36 @@ impl TaskDispatcher {
     }
 
     async fn execute_task(&self, task: &Task, current_timestamp: u64) -> bool {
-        match task {
-            Task::SaveSnapshot { epoch, .. } => {
-                tasks::save_snapshot::execute(&self.route, *epoch).await.is_ok()
+        let epoch = task.epoch;
+        match &task.kind {
+            TaskKind::SaveSnapshot => {
+                tasks::save_snapshot::execute(&self.route, epoch).await.is_ok()
             }
-            Task::Claim { epoch, .. } => {
-                tasks::claim::execute(&self.route, *epoch).await.is_ok()
+            TaskKind::Claim { .. } => {
+                tasks::claim::execute(&self.route, epoch).await.is_ok()
             }
-            Task::VerifyClaim { epoch, .. } => {
+            TaskKind::VerifyClaim => {
                 tasks::verify_claim::execute(
                     &self.route,
-                    *epoch,
+                    epoch,
                     &self.claim_store,
                     current_timestamp,
                     &self.task_store,
                 ).await.is_ok()
             }
-            Task::Challenge { epoch, .. } => {
-                tasks::challenge::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
+            TaskKind::Challenge => {
+                tasks::challenge::execute(&self.route, epoch, &self.claim_store).await.is_ok()
             }
-            Task::SendSnapshot { epoch, .. } => {
-                tasks::send_snapshot::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
+            TaskKind::SendSnapshot => {
+                tasks::send_snapshot::execute(&self.route, epoch, &self.claim_store).await.is_ok()
             }
-            Task::StartVerification { epoch, .. } => {
-                tasks::start_verification::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
+            TaskKind::StartVerification => {
+                tasks::start_verification::execute(&self.route, epoch, &self.claim_store).await.is_ok()
             }
-            Task::VerifySnapshot { epoch, .. } => {
-                tasks::verify_snapshot::execute(&self.route, *epoch, &self.claim_store).await.is_ok()
+            TaskKind::VerifySnapshot => {
+                tasks::verify_snapshot::execute(&self.route, epoch, &self.claim_store).await.is_ok()
             }
-            Task::ExecuteRelay { position, l2_sender, dest_addr, l2_block, l1_block, l2_timestamp, amount, data, .. } => {
+            TaskKind::ExecuteRelay { position, l2_sender, dest_addr, l2_block, l1_block, l2_timestamp, amount, data } => {
                 tasks::execute_relay::execute(
                     &self.route,
                     self.config.arb_outbox,

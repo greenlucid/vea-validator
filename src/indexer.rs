@@ -7,7 +7,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::config::Route;
 use crate::contracts::{IVeaInbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
-use crate::tasks::{self, Task, TaskStore, ClaimStore, ClaimData, send_snapshot};
+use crate::tasks::{self, Task, TaskKind, TaskStore, ClaimStore, ClaimData, send_snapshot};
 
 const CHUNK_SIZE: u64 = 500;
 const FINALITY_BUFFER_SECS: u64 = 15 * 60;
@@ -192,7 +192,7 @@ impl EventIndexer {
         };
 
         let state = self.task_store.load();
-        if state.tasks.iter().any(|t| matches!(t, Task::ExecuteRelay { epoch: e, .. } if *e == epoch)) {
+        if state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::ExecuteRelay { .. })) {
             return;
         }
 
@@ -207,17 +207,19 @@ impl EventIndexer {
                     "[{}][Indexer] Found SnapshotSent: epoch={}, position={:#x}",
                     self.route.name, epoch, task.2
                 );
-                self.task_store.add_task(Task::ExecuteRelay {
+                self.task_store.add_task(Task {
                     epoch: task.0,
                     execute_after: task.1,
-                    position: task.2,
-                    l2_sender: task.3,
-                    dest_addr: task.4,
-                    l2_block: task.5,
-                    l1_block: task.6,
-                    l2_timestamp: task.7,
-                    amount: task.8,
-                    data: task.9,
+                    kind: TaskKind::ExecuteRelay {
+                        position: task.2,
+                        l2_sender: task.3,
+                        dest_addr: task.4,
+                        l2_block: task.5,
+                        l1_block: task.6,
+                        l2_timestamp: task.7,
+                        amount: task.8,
+                        data: task.9,
+                    },
                 });
             }
             None => {
@@ -243,7 +245,7 @@ impl EventIndexer {
         let timestamp_claimed = block_ts as u32;
 
         let state = self.task_store.load();
-        if state.tasks.iter().any(|t| t.epoch() == epoch) {
+        if state.tasks.iter().any(|t| t.epoch == epoch) {
             return;
         }
 
@@ -260,9 +262,10 @@ impl EventIndexer {
 
         println!("[{}][Indexer] Claimed event for epoch {} - scheduling VerifyClaim", self.route.name, epoch);
 
-        self.task_store.add_task(Task::VerifyClaim {
+        self.task_store.add_task(Task {
             epoch,
             execute_after: now,
+            kind: TaskKind::VerifyClaim,
         });
     }
 
@@ -274,9 +277,9 @@ impl EventIndexer {
         let epoch = U256::from_be_bytes(log.topics()[1].0).to::<u64>();
 
         let mut state = self.task_store.load();
-        state.tasks.retain(|t| !(t.epoch() == epoch && matches!(t, Task::StartVerification { .. })));
+        state.tasks.retain(|t| !(t.epoch == epoch && matches!(t.kind, TaskKind::StartVerification)));
 
-        if state.tasks.iter().any(|t| matches!(t, Task::VerifySnapshot { epoch: e, .. } if *e == epoch)) {
+        if state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::VerifySnapshot)) {
             self.task_store.save(&state);
             return;
         }
@@ -298,9 +301,10 @@ impl EventIndexer {
             self.route.name, epoch, execute_after
         );
 
-        state.tasks.push(Task::VerifySnapshot {
+        state.tasks.push(Task {
             epoch,
             execute_after,
+            kind: TaskKind::VerifySnapshot,
         });
         self.task_store.save(&state);
     }

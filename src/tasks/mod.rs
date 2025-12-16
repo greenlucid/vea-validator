@@ -48,40 +48,23 @@ pub async fn send_tx(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub epoch: u64,
+    pub execute_after: u64,
+    pub kind: TaskKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Task {
-    SaveSnapshot {
-        epoch: u64,
-        execute_after: u64,
-    },
-    Claim {
-        epoch: u64,
-        execute_after: u64,
-        state_root: FixedBytes<32>,
-    },
-    VerifyClaim {
-        epoch: u64,
-        execute_after: u64,
-    },
-    Challenge {
-        epoch: u64,
-        execute_after: u64,
-    },
-    SendSnapshot {
-        epoch: u64,
-        execute_after: u64,
-    },
-    StartVerification {
-        epoch: u64,
-        execute_after: u64,
-    },
-    VerifySnapshot {
-        epoch: u64,
-        execute_after: u64,
-    },
+pub enum TaskKind {
+    SaveSnapshot,
+    Claim { state_root: FixedBytes<32> },
+    VerifyClaim,
+    Challenge,
+    SendSnapshot,
+    StartVerification,
+    VerifySnapshot,
     ExecuteRelay {
-        epoch: u64,
-        execute_after: u64,
         #[serde(with = "u256_hex")]
         position: U256,
         l2_sender: Address,
@@ -96,43 +79,17 @@ pub enum Task {
     },
 }
 
-impl Task {
-    pub fn epoch(&self) -> u64 {
-        match self {
-            Task::SaveSnapshot { epoch, .. } => *epoch,
-            Task::Claim { epoch, .. } => *epoch,
-            Task::VerifyClaim { epoch, .. } => *epoch,
-            Task::Challenge { epoch, .. } => *epoch,
-            Task::SendSnapshot { epoch, .. } => *epoch,
-            Task::StartVerification { epoch, .. } => *epoch,
-            Task::VerifySnapshot { epoch, .. } => *epoch,
-            Task::ExecuteRelay { epoch, .. } => *epoch,
-        }
-    }
-
-    pub fn execute_after(&self) -> u64 {
-        match self {
-            Task::SaveSnapshot { execute_after, .. } => *execute_after,
-            Task::Claim { execute_after, .. } => *execute_after,
-            Task::VerifyClaim { execute_after, .. } => *execute_after,
-            Task::Challenge { execute_after, .. } => *execute_after,
-            Task::SendSnapshot { execute_after, .. } => *execute_after,
-            Task::StartVerification { execute_after, .. } => *execute_after,
-            Task::VerifySnapshot { execute_after, .. } => *execute_after,
-            Task::ExecuteRelay { execute_after, .. } => *execute_after,
-        }
-    }
-
+impl TaskKind {
     pub fn name(&self) -> &'static str {
         match self {
-            Task::SaveSnapshot { .. } => "SaveSnapshot",
-            Task::Claim { .. } => "Claim",
-            Task::VerifyClaim { .. } => "VerifyClaim",
-            Task::Challenge { .. } => "Challenge",
-            Task::SendSnapshot { .. } => "SendSnapshot",
-            Task::StartVerification { .. } => "StartVerification",
-            Task::VerifySnapshot { .. } => "VerifySnapshot",
-            Task::ExecuteRelay { .. } => "ExecuteRelay",
+            TaskKind::SaveSnapshot => "SaveSnapshot",
+            TaskKind::Claim { .. } => "Claim",
+            TaskKind::VerifyClaim => "VerifyClaim",
+            TaskKind::Challenge => "Challenge",
+            TaskKind::SendSnapshot => "SendSnapshot",
+            TaskKind::StartVerification => "StartVerification",
+            TaskKind::VerifySnapshot => "VerifySnapshot",
+            TaskKind::ExecuteRelay { .. } => "ExecuteRelay",
         }
     }
 }
@@ -273,9 +230,7 @@ impl TaskStore {
 
     pub fn remove_task(&self, task: &Task) {
         let mut state = self.load();
-        let epoch = task.epoch();
-        let name = task.name();
-        state.tasks.retain(|t| !(t.epoch() == epoch && t.name() == name));
+        state.tasks.retain(|t| !(t.epoch == task.epoch && t.kind.name() == task.kind.name()));
         self.save(&state);
     }
 

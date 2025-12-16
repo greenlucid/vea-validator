@@ -1,7 +1,7 @@
 use alloy::primitives::{FixedBytes, U256};
 use crate::config::Route;
 use crate::contracts::IVeaInbox;
-use crate::tasks::{Task, TaskStore, ClaimStore, challenge};
+use crate::tasks::{Task, TaskKind, TaskStore, ClaimStore, challenge};
 
 const START_VERIFICATION_DELAY: u64 = 25 * 3600;
 
@@ -25,9 +25,10 @@ pub async fn execute(
 
     if claimed_state_root == correct_state_root {
         println!("[{}] Claim for epoch {} is VALID, scheduling startVerification in 25h", route.name, epoch);
-        task_store.add_task(Task::StartVerification {
+        task_store.add_task(Task {
             epoch,
             execute_after: current_timestamp + START_VERIFICATION_DELAY,
+            kind: TaskKind::StartVerification,
         });
     } else {
         println!("[{}] Claim for epoch {} is INVALID! Challenging immediately", route.name, epoch);
