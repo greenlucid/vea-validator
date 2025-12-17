@@ -1,4 +1,5 @@
 use alloy::primitives::{FixedBytes, U256};
+use std::sync::{Arc, Mutex};
 use crate::config::Route;
 use crate::contracts::{IVeaInbox, IVeaOutbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
 use crate::tasks::{send_tx, ClaimStore};
@@ -8,7 +9,7 @@ const SEVEN_DAYS_SECS: u32 = 7 * 24 * 3600;
 pub async fn execute(
     route: &Route,
     epoch: u64,
-    claim_store: &ClaimStore,
+    claim_store: &Arc<Mutex<ClaimStore>>,
     current_timestamp: u64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let inbox = IVeaInbox::new(route.inbox_address, route.inbox_provider.clone());
@@ -33,7 +34,7 @@ pub async fn execute(
     }
 
     let since = (current_timestamp as u32).saturating_sub(SEVEN_DAYS_SECS);
-    if claim_store.has_state_root_in_recent_claims(state_root, since) {
+    if claim_store.lock().unwrap().has_state_root_in_recent_claims(state_root, since) {
         println!("[{}][task::claim] Epoch {} state root already in pending claim", route.name, epoch);
         return Ok(());
     }

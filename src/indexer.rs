@@ -1,8 +1,8 @@
 use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
-use std::path::PathBuf;
 use std::cmp::min;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::time::{sleep, Duration};
 
@@ -20,8 +20,7 @@ const FINALITY_BUFFER_SECS: u64 = 15 * 60;
 const CATCHUP_SLEEP: Duration = Duration::from_secs(1);
 const IDLE_SLEEP: Duration = Duration::from_secs(5 * 60);
 const RELAY_DELAY: u64 = 7 * 24 * 3600 + 3600;
-const SYNC_LOOKBACK_SECS: u64 = 8 * 24 * 3600 + 12 * 3600;
-// const SYNC_LOOKBACK_SECS: u64 = 12 * 3600; for testing...
+const SYNC_LOOKBACK_SECS: u64 = 18 * 3600;
 const ARB_SYS: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x64]);
 
 async fn get_log_timestamp(log: &alloy::rpc::types::Log, provider: &DynProvider<Ethereum>) -> u64 {
@@ -65,8 +64,8 @@ async fn find_block_by_timestamp(provider: &DynProvider<Ethereum>, target_ts: u6
 pub struct EventIndexer {
     route: Route,
     wallet_address: Address,
-    task_store: TaskStore,
-    claim_store: ClaimStore,
+    task_store: Arc<Mutex<TaskStore>>,
+    claim_store: Arc<Mutex<ClaimStore>>,
     inbox_catchup: (AtomicU64, AtomicU64),
     outbox_catchup: (AtomicU64, AtomicU64),
 }
@@ -75,22 +74,22 @@ impl EventIndexer {
     pub fn new(
         route: Route,
         wallet_address: Address,
-        schedule_path: impl Into<PathBuf>,
-        claims_path: impl Into<PathBuf>,
+        task_store: Arc<Mutex<TaskStore>>,
+        claim_store: Arc<Mutex<ClaimStore>>,
     ) -> Self {
         Self {
             route,
             wallet_address,
-            task_store: TaskStore::new(schedule_path),
-            claim_store: ClaimStore::new(claims_path),
+            task_store,
+            claim_store,
             inbox_catchup: (AtomicU64::new(0), AtomicU64::new(0)),
             outbox_catchup: (AtomicU64::new(0), AtomicU64::new(0)),
         }
     }
 
     pub async fn initialize(&self) {
-        self.task_store.set_on_sync(false);
-        let state = self.task_store.load();
+        self.task_store.lock().unwrap().set_on_sync(false);
+        let state = self.task_store.lock().unwrap().load();
 
         let inbox_now = self.route.inbox_provider.get_block_by_number(Default::default()).await
             .expect("Failed to get inbox block")
@@ -117,7 +116,7 @@ impl EventIndexer {
             let indexing_since = inbox_now.saturating_sub(SYNC_LOOKBACK_SECS);
             let inbox_start = find_block_by_timestamp(&self.route.inbox_provider, indexing_since).await;
             let outbox_start = find_block_by_timestamp(&self.route.outbox_provider, indexing_since).await;
-            self.task_store.initialize_sync(indexing_since, inbox_start, outbox_start);
+            self.task_store.lock().unwrap().initialize_sync(indexing_since, inbox_start, outbox_start);
             println!("[{}][Indexer] Initialized sync: indexing_since={}, inbox_start={}, outbox_start={}",
                 self.route.name, indexing_since, inbox_start, outbox_start);
         }
@@ -127,9 +126,9 @@ impl EventIndexer {
         loop {
             let done = self.scan_once().await;
             if done {
-                if !self.task_store.is_on_sync() {
+                if !self.task_store.lock().unwrap().is_on_sync() {
                     println!("[{}][Indexer] Sync complete", self.route.name);
-                    self.task_store.set_on_sync(true);
+                    self.task_store.lock().unwrap().set_on_sync(true);
                 }
                 sleep(IDLE_SLEEP).await;
             } else {
@@ -156,7 +155,7 @@ impl EventIndexer {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("[{}][Indexer] Failed to get {} block number: {}", self.route.name, label, e);
-                return true;
+                return false;
             }
         };
 
@@ -165,7 +164,7 @@ impl EventIndexer {
             .expect("Block not found");
         let now = current_block_data.header.timestamp;
 
-        let state = self.task_store.load();
+        let state = self.task_store.lock().unwrap().load();
         let from_block = match target {
             Inbox => state.inbox_last_block.expect("inbox_last_block not set"),
             Outbox => state.outbox_last_block.expect("outbox_last_block not set"),
@@ -222,8 +221,8 @@ impl EventIndexer {
                 }
 
                 match target {
-                    Inbox => self.task_store.update_inbox_block(to_block),
-                    Outbox => self.task_store.update_outbox_block(to_block),
+                    Inbox => self.task_store.lock().unwrap().update_inbox_block(to_block),
+                    Outbox => self.task_store.lock().unwrap().update_outbox_block(to_block),
                 }
 
                 let is_done = to_block >= target_block;
@@ -243,7 +242,7 @@ impl EventIndexer {
             }
             Err(e) => {
                 eprintln!("[{}][Indexer] Failed to query {} logs {}-{}: {}", self.route.name, label, from_block, to_block, e);
-                true
+                false
             }
         }
     }
@@ -271,7 +270,7 @@ impl EventIndexer {
             None => return,
         };
 
-        let state = self.task_store.load();
+        let state = self.task_store.lock().unwrap().load();
         if state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::ExecuteRelay { .. })) {
             return;
         }
@@ -295,7 +294,7 @@ impl EventIndexer {
                     "[{}][Indexer] Found SnapshotSent: epoch={}, position={:#x}",
                     self.route.name, epoch, task.2
                 );
-                self.task_store.add_task(Task {
+                self.task_store.lock().unwrap().add_task(Task {
                     epoch: task.0,
                     execute_after: task.1,
                     kind: TaskKind::ExecuteRelay {
@@ -333,12 +332,12 @@ impl EventIndexer {
         let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
         let timestamp_claimed = block_ts as u32;
 
-        let state = self.task_store.load();
+        let state = self.task_store.lock().unwrap().load();
         if state.tasks.iter().any(|t| t.epoch == epoch) {
             return;
         }
 
-        self.claim_store.store(ClaimData {
+        self.claim_store.lock().unwrap().store(ClaimData {
             epoch,
             state_root,
             claimer,
@@ -349,7 +348,7 @@ impl EventIndexer {
             challenger: Address::ZERO,
         });
 
-        self.task_store.add_task(Task {
+        self.task_store.lock().unwrap().add_task(Task {
             epoch,
             execute_after: block_ts,
             kind: TaskKind::ValidateClaim,
@@ -364,9 +363,9 @@ impl EventIndexer {
         let epoch = U256::from_be_bytes(log.topics()[1].0).to::<u64>();
         println!("[{}][Indexer] VerificationStarted event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
 
-        if !self.claim_store.exists(epoch) {
+        if !self.claim_store.lock().unwrap().exists(epoch) {
             let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
-            let state = self.task_store.load();
+            let state = self.task_store.lock().unwrap().load();
             let grace_end = state.indexing_since.unwrap_or(0) + SYNC_LOOKBACK_SECS;
 
             if block_ts < grace_end {
@@ -379,7 +378,7 @@ impl EventIndexer {
         let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await as u32;
         let block_num = log.block_number.expect("Log missing block_number") as u32;
 
-        self.claim_store.update(epoch, |c| {
+        self.claim_store.lock().unwrap().update(epoch, |c| {
             c.timestamp_verification = block_ts;
             c.blocknumber_verification = block_num;
         });
@@ -389,7 +388,7 @@ impl EventIndexer {
 
         let execute_after = (block_ts as u64) + min_challenge_period;
 
-        self.task_store.add_task(Task {
+        self.task_store.lock().unwrap().add_task(Task {
             epoch,
             execute_after,
             kind: TaskKind::VerifySnapshot,
@@ -405,9 +404,9 @@ impl EventIndexer {
         let challenger = Address::from_slice(&log.topics()[2].0[12..]);
         println!("[{}][Indexer] Challenged event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
 
-        if !self.claim_store.exists(epoch) {
+        if !self.claim_store.lock().unwrap().exists(epoch) {
             let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
-            let state = self.task_store.load();
+            let state = self.task_store.lock().unwrap().load();
             let grace_end = state.indexing_since.unwrap_or(0) + SYNC_LOOKBACK_SECS;
 
             if block_ts < grace_end {
@@ -417,12 +416,12 @@ impl EventIndexer {
             panic!("[{}] Challenged for epoch {} but claim not found - this is a bug", self.route.name, epoch);
         }
 
-        self.claim_store.update(epoch, |c| {
+        self.claim_store.lock().unwrap().update(epoch, |c| {
             c.challenger = challenger;
         });
 
         let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
-        self.task_store.add_task(Task {
+        self.task_store.lock().unwrap().add_task(Task {
             epoch,
             execute_after: block_ts,
             kind: TaskKind::SendSnapshot,
@@ -441,8 +440,8 @@ impl EventIndexer {
 
         let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
 
-        if !self.claim_store.exists(epoch) {
-            let state = self.task_store.load();
+        if !self.claim_store.lock().unwrap().exists(epoch) {
+            let state = self.task_store.lock().unwrap().load();
             let grace_end = state.indexing_since.unwrap_or(0) + SYNC_LOOKBACK_SECS;
 
             if block_ts < grace_end {
@@ -452,7 +451,7 @@ impl EventIndexer {
             panic!("[{}] Verified for epoch {} but claim not found - this is a bug", self.route.name, epoch);
         }
 
-        let claim = self.claim_store.get(epoch);
+        let claim = self.claim_store.lock().unwrap().get(epoch);
 
         let real_state_root = self.get_inbox_snapshot(epoch).await;
 
@@ -462,11 +461,11 @@ impl EventIndexer {
             "Challenger"
         };
 
-        self.claim_store.update(epoch, |c| {
+        self.claim_store.lock().unwrap().update(epoch, |c| {
             c.honest = honest.to_string();
         });
 
-        self.task_store.add_task(Task {
+        self.task_store.lock().unwrap().add_task(Task {
             epoch,
             execute_after: block_ts,
             kind: TaskKind::WithdrawDeposit,

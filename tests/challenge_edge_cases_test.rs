@@ -2,12 +2,12 @@ mod common;
 
 use alloy::primitives::{Address, FixedBytes, U256};
 use serial_test::serial;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use vea_validator::{
     contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToGnosis, IWETH},
     config::ValidatorConfig,
     indexer::EventIndexer,
-    tasks::{dispatcher::TaskDispatcher, TaskStore as TaskStoreImport},
+    tasks::{dispatcher::TaskDispatcher, TaskStore, ClaimStore},
     startup::ensure_weth_approval,
 };
 use common::{restore_pristine, advance_time, send_messages};
@@ -43,11 +43,13 @@ async fn test_challenge_bad_claim() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStoreImport::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -99,10 +101,12 @@ async fn test_challenge_bad_claim_gnosis() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStoreImport::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -154,7 +158,7 @@ async fn test_weth_approval_skipped_if_exists() {
 }
 
 use std::str::FromStr;
-use vea_validator::tasks::{TaskStore, TaskKind};
+use vea_validator::tasks::TaskKind;
 
 #[tokio::test]
 #[serial]
@@ -186,24 +190,25 @@ async fn test_start_verification_drops_task_when_claim_challenged() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    let task_store = TaskStore::new(&schedule_path);
-    task_store.set_on_sync(true);
+    task_store.lock().unwrap().set_on_sync(true);
 
     indexer.scan_once().await;
 
-    let state = task_store.load();
+    let state = task_store.lock().unwrap().load();
     assert!(state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::ValidateClaim)), "ValidateClaim task should exist");
 
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), &schedule_path, &claims_path);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store.clone(), claim_store.clone());
     dispatcher.process_pending().await;
 
-    let state = task_store.load();
+    let state = task_store.lock().unwrap().load();
     assert!(state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::StartVerification)), "StartVerification task should be scheduled");
 
-    let claim_data = vea_validator::tasks::ClaimStore::new(&claims_path).get(epoch);
+    let claim_data = claim_store.lock().unwrap().get(epoch);
     outbox.challenge(U256::from(epoch), vea_validator::contracts::Claim {
         stateRoot: correct_root,
         claimer: claim_data.claimer,
@@ -218,7 +223,7 @@ async fn test_start_verification_drops_task_when_claim_challenged() {
 
     dispatcher.process_pending().await;
 
-    let state = task_store.load();
+    let state = task_store.lock().unwrap().load();
     assert!(!state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::StartVerification)),
         "Task should be dropped immediately when Challenged event detected");
 }

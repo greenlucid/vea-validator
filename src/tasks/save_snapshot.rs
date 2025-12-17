@@ -14,7 +14,7 @@ pub async fn execute(
     let epoch_start_ts = epoch * epoch_period;
     let current_block = route.inbox_provider.get_block_number().await?;
     let current_ts = route.inbox_provider.get_block_by_number(current_block.into()).await?.unwrap().header.timestamp;
-    let elapsed_ms = (current_ts - epoch_start_ts) * 1000;
+    let elapsed_ms = current_ts.saturating_sub(epoch_start_ts) * 1000;
     let from_block = current_block.saturating_sub(elapsed_ms * 110 / 100 / (route.inbox_avg_block_millis as u64));
 
     let msg_sent_sig = alloy::primitives::keccak256("MessageSent(bytes)".as_bytes());

@@ -1,5 +1,5 @@
 use alloy::providers::Provider;
-use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::time::{sleep, Duration};
 
 use crate::config::{Route, ValidatorConfig};
@@ -11,22 +11,22 @@ const POLL_INTERVAL: Duration = Duration::from_secs(15);
 pub struct TaskDispatcher {
     config: ValidatorConfig,
     route: Route,
-    task_store: TaskStore,
-    claim_store: ClaimStore,
+    task_store: Arc<Mutex<TaskStore>>,
+    claim_store: Arc<Mutex<ClaimStore>>,
 }
 
 impl TaskDispatcher {
     pub fn new(
         config: ValidatorConfig,
         route: Route,
-        schedule_path: impl Into<PathBuf>,
-        claims_path: impl Into<PathBuf>,
+        task_store: Arc<Mutex<TaskStore>>,
+        claim_store: Arc<Mutex<ClaimStore>>,
     ) -> Self {
         Self {
             config,
             route,
-            task_store: TaskStore::new(schedule_path),
-            claim_store: ClaimStore::new(claims_path),
+            task_store,
+            claim_store,
         }
     }
 
@@ -38,11 +38,11 @@ impl TaskDispatcher {
     }
 
     pub async fn process_pending(&self) {
-        if !self.task_store.is_on_sync() {
+        if !self.task_store.lock().unwrap().is_on_sync() {
             return;
         }
 
-        let state = self.task_store.load();
+        let state = self.task_store.lock().unwrap().load();
 
         let now = self.route.outbox_provider.get_block_by_number(Default::default()).await
             .expect("Failed to get latest block")
@@ -66,7 +66,7 @@ impl TaskDispatcher {
             println!("[{}][Dispatcher] Executing {} for epoch {}", self.route.name, task.kind.name(), task.epoch);
             let success = self.execute_task(&task, now).await;
             if success {
-                self.task_store.remove_task(&task);
+                self.task_store.lock().unwrap().remove_task(&task);
             }
         }
     }
@@ -93,11 +93,11 @@ impl TaskDispatcher {
                 match tasks::challenge::execute(&self.config, &self.route, epoch, &self.claim_store).await {
                     Ok(_) => true,
                     Err(e) if e.to_string() == "Insufficient funds" => {
-                        self.task_store.reschedule_task(task, current_timestamp + 15 * 60);
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 15 * 60);
                         true
                     }
                     Err(e) if e.to_string() == "VerificationStarted" => {
-                        self.task_store.reschedule_task(task, current_timestamp + 15 * 60);
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 15 * 60);
                         true
                     }
                     Err(_) => false,

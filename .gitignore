@@ -36,5 +36,4 @@ data/
 
 # Claude IDE
 .claude/
-info
 CLAUDE.md

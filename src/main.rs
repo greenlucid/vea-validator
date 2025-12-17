@@ -1,8 +1,10 @@
+use std::sync::{Arc, Mutex};
 use futures_util::future::select_all;
 use vea_validator::{
     epoch_watcher::EpochWatcher,
     indexer::EventIndexer,
     tasks::dispatcher::TaskDispatcher,
+    tasks::{TaskStore, ClaimStore},
     contracts::IVeaInboxArbToEth,
     config::{ValidatorConfig, Route},
     startup::{check_rpc_health, check_balances},
@@ -15,10 +17,13 @@ async fn run_route(config: ValidatorConfig, route: Route, epoch_period: u64) {
 
     println!("[{}] Inbox: {:?}, Outbox: {:?}", route.name, route.inbox_address, route.outbox_address);
 
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
+
     let wallet_address = config.wallet.default_signer().address();
-    let watcher = EpochWatcher::new(route.clone(), config.make_claims, &claims_path, &schedule_path);
-    let indexer = EventIndexer::new(route.clone(), wallet_address, &schedule_path, &claims_path);
-    let dispatcher = TaskDispatcher::new(config, route.clone(), &schedule_path, &claims_path);
+    let watcher = EpochWatcher::new(route.clone(), config.make_claims, claim_store.clone(), task_store.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
+    let dispatcher = TaskDispatcher::new(config, route.clone(), task_store.clone(), claim_store.clone());
 
     indexer.initialize().await;
 

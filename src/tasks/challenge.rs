@@ -1,5 +1,6 @@
 use alloy::primitives::U256;
 use alloy::providers::Provider;
+use std::sync::{Arc, Mutex};
 use crate::config::{Route, ValidatorConfig};
 use crate::contracts::{IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
 use crate::tasks::{send_tx, was_event_emitted, ClaimStore};
@@ -8,9 +9,9 @@ pub async fn execute(
     config: &ValidatorConfig,
     route: &Route,
     epoch: u64,
-    claim_store: &ClaimStore,
+    claim_store: &Arc<Mutex<ClaimStore>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let claim = claim_store.get_claim(epoch);
+    let claim = claim_store.lock().unwrap().get_claim(epoch);
     let wallet_address = config.wallet.default_signer().address();
 
     let result = if let Some(weth_address) = route.weth_address {

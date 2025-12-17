@@ -2,12 +2,12 @@ mod common;
 
 use alloy::primitives::U256;
 use serial_test::serial;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use vea_validator::{
     contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth},
     config::ValidatorConfig,
     indexer::EventIndexer,
-    tasks::{dispatcher::TaskDispatcher, TaskStore},
+    tasks::{dispatcher::TaskDispatcher, TaskStore, ClaimStore},
 };
 use common::{restore_pristine, advance_time, send_messages};
 use alloy::providers::Provider;
@@ -42,11 +42,13 @@ async fn test_start_verification() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -91,11 +93,13 @@ async fn test_verify_snapshot() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -147,11 +151,13 @@ async fn test_full_happy_path_via_indexer() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path.clone());
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store.clone());
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -183,6 +189,5 @@ async fn test_full_happy_path_via_indexer() {
     let balance_after_withdraw = outbox_provider.get_balance(wallet_address).await.unwrap();
     assert!(balance_after_withdraw > balance_after_claim, "Deposit was not returned to claimer");
 
-    let claim_store = vea_validator::tasks::ClaimStore::new(claims_path);
-    assert!(std::panic::catch_unwind(|| claim_store.get(epoch)).is_err(), "Claim should be removed after withdraw");
+    assert!(std::panic::catch_unwind(|| claim_store.lock().unwrap().get(epoch)).is_err(), "Claim should be removed after withdraw");
 }

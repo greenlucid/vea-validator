@@ -1,4 +1,5 @@
 use alloy::primitives::U256;
+use std::sync::{Arc, Mutex};
 use crate::config::Route;
 use crate::contracts::{IVeaInboxArbToEth, IVeaInboxArbToGnosis};
 use crate::tasks::{send_tx, ClaimStore};
@@ -6,9 +7,9 @@ use crate::tasks::{send_tx, ClaimStore};
 pub async fn execute(
     route: &Route,
     epoch: u64,
-    claim_store: &ClaimStore,
+    claim_store: &Arc<Mutex<ClaimStore>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let claim = claim_store.get_claim(epoch);
+    let claim = claim_store.lock().unwrap().get_claim(epoch);
 
     if route.weth_address.is_some() {
         let inbox = IVeaInboxArbToGnosis::new(route.inbox_address, route.inbox_provider.clone());

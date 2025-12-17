@@ -2,12 +2,12 @@ mod common;
 
 use alloy::primitives::{Address, FixedBytes, U256};
 use serial_test::serial;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use vea_validator::{
     contracts::{IVeaInboxArbToEth, IVeaOutboxArbToEth, IVeaInboxArbToGnosis, IVeaOutboxArbToGnosis, IWETH},
     config::ValidatorConfig,
     indexer::EventIndexer,
-    tasks::{dispatcher::TaskDispatcher, TaskStore},
+    tasks::{dispatcher::TaskDispatcher, TaskStore, ClaimStore},
     startup::ensure_weth_approval,
 };
 use std::str::FromStr;
@@ -44,11 +44,13 @@ async fn test_send_snapshot_after_challenge() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -94,11 +96,13 @@ async fn test_send_snapshot_on_challenged_event() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
 
@@ -170,11 +174,13 @@ async fn test_execute_relay() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path.clone());
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store.clone());
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -198,8 +204,7 @@ async fn test_execute_relay() {
     let balance_after_withdraw = outbox_provider.get_balance(wallet_address).await.unwrap();
     assert!(balance_after_withdraw > balance_after_challenge, "Deposit was not returned to claimer (honest) after disputed verification");
 
-    let claim_store = vea_validator::tasks::ClaimStore::new(claims_path);
-    assert!(std::panic::catch_unwind(|| claim_store.get(epoch)).is_err(), "Claim should be removed after withdraw");
+    assert!(std::panic::catch_unwind(|| claim_store.lock().unwrap().get(epoch)).is_err(), "Claim should be removed after withdraw");
 }
 
 #[tokio::test]
@@ -241,10 +246,12 @@ async fn test_send_snapshot_gnosis() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
@@ -305,11 +312,13 @@ async fn test_execute_relay_skips_spent() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path.clone(), claims_path.clone());
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store.clone(), claim_store.clone());
 
     indexer.scan_once().await;
     advance_time(15 * 60 + 10).await;
@@ -319,7 +328,7 @@ async fn test_execute_relay_skips_spent() {
     advance_time(relay_delay + 10).await;
     dispatcher.process_pending().await;
 
-    let dispatcher2 = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    let dispatcher2 = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
     dispatcher2.process_pending().await;
 }
 
@@ -357,11 +366,13 @@ async fn test_challenger_wins_bad_claim() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
+    let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
+    let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     let wallet_address = c.wallet.default_signer().address();
-    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     indexer.initialize().await;
-    TaskStore::new(&schedule_path).set_on_sync(true);
-    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
+    task_store.lock().unwrap().set_on_sync(true);
+    let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store, claim_store);
 
     indexer.scan_once().await;
     dispatcher.process_pending().await;
