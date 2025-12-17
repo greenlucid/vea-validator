@@ -64,8 +64,8 @@ pub struct EventIndexer {
     wallet_address: Address,
     task_store: Arc<Mutex<TaskStore>>,
     claim_store: Arc<Mutex<ClaimStore>>,
-    inbox_catchup: (AtomicU64, AtomicU64),
-    outbox_catchup: (AtomicU64, AtomicU64),
+    inbox_catchup: (AtomicU64, AtomicU64, AtomicU64),
+    outbox_catchup: (AtomicU64, AtomicU64, AtomicU64),
 }
 
 impl EventIndexer {
@@ -80,8 +80,8 @@ impl EventIndexer {
             wallet_address,
             task_store,
             claim_store,
-            inbox_catchup: (AtomicU64::new(0), AtomicU64::new(0)),
-            outbox_catchup: (AtomicU64::new(0), AtomicU64::new(0)),
+            inbox_catchup: (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)),
+            outbox_catchup: (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)),
         }
     }
 
@@ -168,7 +168,7 @@ impl EventIndexer {
             Outbox => state.outbox_last_block.expect("outbox_last_block not set"),
         };
 
-        let (catchup_start, catchup_target) = catchup;
+        let (catchup_start, catchup_target, last_logged_pct) = catchup;
         let mut target_block = catchup_target.load(Ordering::Relaxed);
 
         if target_block == 0 || from_block >= target_block {
@@ -180,11 +180,13 @@ impl EventIndexer {
         if from_block >= target_block {
             catchup_start.store(0, Ordering::Relaxed);
             catchup_target.store(0, Ordering::Relaxed);
+            last_logged_pct.store(0, Ordering::Relaxed);
             return true;
         }
 
         if catchup_start.load(Ordering::Relaxed) == 0 {
             catchup_start.store(from_block, Ordering::Relaxed);
+            last_logged_pct.store(0, Ordering::Relaxed);
         }
 
         let to_block = min(from_block + CHUNK_SIZE, target_block);
@@ -230,11 +232,16 @@ impl EventIndexer {
                     let total = target_block.saturating_sub(start);
                     let done = to_block.saturating_sub(start);
                     let pct = if total > 0 { (done * 100) / total } else { 100 };
-                    println!("[{}][Indexer] {} {}-{} ({}%)", self.route.name, label, from_block, to_block, pct);
+                    let last_pct = last_logged_pct.load(Ordering::Relaxed);
+                    if pct / 10 > last_pct / 10 {
+                        println!("[{}][Indexer] {} sync {}%", self.route.name, label, pct);
+                        last_logged_pct.store(pct, Ordering::Relaxed);
+                    }
                 }
                 if is_done {
                     catchup_start.store(0, Ordering::Relaxed);
                     catchup_target.store(0, Ordering::Relaxed);
+                    last_logged_pct.store(0, Ordering::Relaxed);
                 }
                 is_done
             }
