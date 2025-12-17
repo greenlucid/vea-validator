@@ -8,7 +8,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::config::Route;
 use crate::contracts::{IVeaInbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
-use crate::tasks::{self, Task, TaskKind, TaskStore, ClaimStore, ClaimData, send_snapshot, SYNC_LOOKBACK_SECS};
+use crate::tasks::{self, Task, TaskKind, TaskStore, ClaimStore, ClaimData, send_snapshot};
 
 use alloy::network::Ethereum;
 use alloy::providers::DynProvider;
@@ -20,6 +20,7 @@ const FINALITY_BUFFER_SECS: u64 = 15 * 60;
 const CATCHUP_SLEEP: Duration = Duration::from_secs(1);
 const IDLE_SLEEP: Duration = Duration::from_secs(5 * 60);
 const RELAY_DELAY: u64 = 7 * 24 * 3600 + 3600;
+const SYNC_LOOKBACK_SECS: u64 = 8 * 24 * 3600 + 12 * 3600;
 const ARB_SYS: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x64]);
 
 async fn get_log_timestamp(log: &alloy::rpc::types::Log, provider: &DynProvider<Ethereum>) -> u64 {

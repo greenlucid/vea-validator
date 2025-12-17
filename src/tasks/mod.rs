@@ -19,8 +19,6 @@ use std::path::PathBuf;
 
 use crate::contracts::{Claim, Party};
 
-pub const SYNC_LOOKBACK_SECS: u64 = 8 * 24 * 3600 + 12 * 3600; // 8.5 days
-
 pub async fn send_tx(
     result: Result<PendingTransactionBuilder<Ethereum>, ContractError>,
     action: &str,
