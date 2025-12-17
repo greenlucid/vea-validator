@@ -19,6 +19,8 @@ use std::path::PathBuf;
 
 use crate::contracts::{Claim, Party};
 
+pub const SYNC_LOOKBACK_SECS: u64 = 8 * 24 * 3600 + 12 * 3600; // 8.5 days
+
 pub async fn send_tx(
     result: Result<PendingTransactionBuilder<Ethereum>, ContractError>,
     action: &str,
@@ -99,6 +101,7 @@ pub struct RouteState {
     pub inbox_last_block: Option<u64>,
     pub outbox_last_block: Option<u64>,
     pub tasks: Vec<Task>,
+    pub indexing_since: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +203,10 @@ impl ClaimStore {
         let claims = self.load_all();
         claims.iter().any(|c| c.state_root == state_root && c.timestamp_claimed >= since_timestamp)
     }
+
+    pub fn exists(&self, epoch: u64) -> bool {
+        self.load_all().iter().any(|c| c.epoch == epoch)
+    }
 }
 
 pub struct TaskStore {
@@ -249,6 +256,12 @@ impl TaskStore {
     pub fn update_outbox_block(&self, block: u64) {
         let mut state = self.load();
         state.outbox_last_block = Some(block);
+        self.save(&state);
+    }
+
+    pub fn set_indexing_since(&self, ts: u64) {
+        let mut state = self.load();
+        state.indexing_since = Some(ts);
         self.save(&state);
     }
 }

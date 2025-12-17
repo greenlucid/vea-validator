@@ -8,7 +8,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::config::Route;
 use crate::contracts::{IVeaInbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
-use crate::tasks::{self, Task, TaskKind, TaskStore, ClaimStore, ClaimData, send_snapshot};
+use crate::tasks::{self, Task, TaskKind, TaskStore, ClaimStore, ClaimData, send_snapshot, SYNC_LOOKBACK_SECS};
 
 use alloy::network::Ethereum;
 use alloy::providers::DynProvider;
@@ -29,6 +29,33 @@ async fn get_log_timestamp(log: &alloy::rpc::types::Log, provider: &DynProvider<
         .expect("Failed to fetch block for timestamp")
         .expect("Block not found");
     block.header.timestamp
+}
+
+async fn find_block_by_timestamp(provider: &DynProvider<Ethereum>, target_ts: u64) -> u64 {
+    let latest = provider.get_block_number().await.expect("Failed to get latest block number");
+    let latest_block = provider.get_block_by_number(latest.into()).await
+        .expect("Failed to get latest block")
+        .expect("Latest block not found");
+
+    if target_ts >= latest_block.header.timestamp {
+        return latest;
+    }
+
+    let mut lo = 0u64;
+    let mut hi = latest;
+
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let block = provider.get_block_by_number(mid.into()).await
+            .expect("Failed to get block during binary search")
+            .expect("Block not found during binary search");
+        if block.header.timestamp < target_ts {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
 }
 
 pub struct EventIndexer {
@@ -88,10 +115,30 @@ impl EventIndexer {
         let now = current_block_data.header.timestamp;
 
         let state = self.task_store.load();
-        let ten_days_blocks = 10 * 24 * 3600 * 1000 / 250;
-        let from_block = state.inbox_last_block.unwrap_or_else(|| current_block.saturating_sub(ten_days_blocks));
 
-        if from_block >= current_block {
+        let needs_indexing_since_update = match state.indexing_since {
+            None => true,
+            Some(ts) => now > ts + SYNC_LOOKBACK_SECS,
+        };
+
+        if needs_indexing_since_update {
+            let new_indexing_since = now.saturating_sub(SYNC_LOOKBACK_SECS);
+            self.task_store.set_indexing_since(new_indexing_since);
+            println!("[{}][Indexer] Set indexing_since to {}", self.route.name, new_indexing_since);
+        }
+
+        let from_block = match state.inbox_last_block {
+            Some(b) => b,
+            None => {
+                let start_ts = now.saturating_sub(SYNC_LOOKBACK_SECS);
+                find_block_by_timestamp(&self.route.inbox_provider, start_ts).await
+            }
+        };
+
+        let target_ts = now.saturating_sub(FINALITY_BUFFER_SECS);
+        let target_block = find_block_by_timestamp(&self.route.inbox_provider, target_ts).await;
+
+        if from_block >= target_block {
             self.inbox_catchup_start.store(0, Ordering::Relaxed);
             return true;
         }
@@ -100,7 +147,7 @@ impl EventIndexer {
             self.inbox_catchup_start.store(from_block, Ordering::Relaxed);
         }
 
-        let to_block = min(from_block + CHUNK_SIZE, current_block);
+        let to_block = min(from_block + CHUNK_SIZE, target_block);
 
         let filter = Filter::new()
             .address(self.route.inbox_address)
@@ -120,14 +167,14 @@ impl EventIndexer {
                 self.task_store.update_inbox_block(to_block);
                 let start = self.inbox_catchup_start.load(Ordering::Relaxed);
                 let start = if start == 0 { from_block } else { start };
-                let total = current_block.saturating_sub(start);
+                let total = target_block.saturating_sub(start);
                 let done = to_block.saturating_sub(start);
                 let pct = if total > 0 { (done * 100) / total } else { 100 };
                 println!(
                     "[{}][Indexer] Inbox {}-{} ({}% synced)",
                     self.route.name, from_block, to_block, pct
                 );
-                let is_done = to_block >= current_block;
+                let is_done = to_block >= target_block;
                 if is_done {
                     self.inbox_catchup_start.store(0, Ordering::Relaxed);
                 }
@@ -163,10 +210,19 @@ impl EventIndexer {
         let now = current_block_data.header.timestamp;
 
         let state = self.task_store.load();
-        let ten_days_blocks = 10 * 24 * 3600 / 12;
-        let from_block = state.outbox_last_block.unwrap_or_else(|| current_block.saturating_sub(ten_days_blocks));
 
-        if from_block >= current_block {
+        let from_block = match state.outbox_last_block {
+            Some(b) => b,
+            None => {
+                let start_ts = now.saturating_sub(SYNC_LOOKBACK_SECS);
+                find_block_by_timestamp(&self.route.outbox_provider, start_ts).await
+            }
+        };
+
+        let target_ts = now.saturating_sub(FINALITY_BUFFER_SECS);
+        let target_block = find_block_by_timestamp(&self.route.outbox_provider, target_ts).await;
+
+        if from_block >= target_block {
             self.outbox_catchup_start.store(0, Ordering::Relaxed);
             return true;
         }
@@ -175,7 +231,7 @@ impl EventIndexer {
             self.outbox_catchup_start.store(from_block, Ordering::Relaxed);
         }
 
-        let to_block = min(from_block + CHUNK_SIZE, current_block);
+        let to_block = min(from_block + CHUNK_SIZE, target_block);
 
         let filter = Filter::new()
             .address(self.route.outbox_address)
@@ -209,14 +265,14 @@ impl EventIndexer {
                 self.task_store.update_outbox_block(to_block);
                 let start = self.outbox_catchup_start.load(Ordering::Relaxed);
                 let start = if start == 0 { from_block } else { start };
-                let total = current_block.saturating_sub(start);
+                let total = target_block.saturating_sub(start);
                 let done = to_block.saturating_sub(start);
                 let pct = if total > 0 { (done * 100) / total } else { 100 };
                 println!(
                     "[{}][Indexer] Outbox {}-{} ({}% synced)",
                     self.route.name, from_block, to_block, pct
                 );
-                let is_done = to_block >= current_block;
+                let is_done = to_block >= target_block;
                 if is_done {
                     self.outbox_catchup_start.store(0, Ordering::Relaxed);
                 }
@@ -323,6 +379,18 @@ impl EventIndexer {
         let epoch = U256::from_be_bytes(log.topics()[1].0).to::<u64>();
         println!("[{}][Indexer] VerificationStarted event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
 
+        if !self.claim_store.exists(epoch) {
+            let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
+            let state = self.task_store.load();
+            let grace_end = state.indexing_since.unwrap_or(0) + SYNC_LOOKBACK_SECS;
+
+            if block_ts < grace_end {
+                println!("[{}][Indexer] Dropping VerificationStarted for epoch {} - claim outside sync window", self.route.name, epoch);
+                return;
+            }
+            panic!("[{}] VerificationStarted for epoch {} but claim not found - this is a bug", self.route.name, epoch);
+        }
+
         let mut state = self.task_store.load();
         state.tasks.retain(|t| !(t.epoch == epoch && matches!(t.kind, TaskKind::StartVerification)));
 
@@ -362,6 +430,18 @@ impl EventIndexer {
         let challenger = Address::from_slice(&log.topics()[2].0[12..]);
         println!("[{}][Indexer] Challenged event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
 
+        if !self.claim_store.exists(epoch) {
+            let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
+            let state = self.task_store.load();
+            let grace_end = state.indexing_since.unwrap_or(0) + SYNC_LOOKBACK_SECS;
+
+            if block_ts < grace_end {
+                println!("[{}][Indexer] Dropping Challenged for epoch {} - claim outside sync window", self.route.name, epoch);
+                return;
+            }
+            panic!("[{}] Challenged for epoch {} but claim not found - this is a bug", self.route.name, epoch);
+        }
+
         self.claim_store.update(epoch, |c| {
             c.challenger = challenger;
         });
@@ -381,6 +461,18 @@ impl EventIndexer {
             return;
         };
         println!("[{}][Indexer] Verified event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
+
+        if !self.claim_store.exists(epoch) {
+            let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
+            let state = self.task_store.load();
+            let grace_end = state.indexing_since.unwrap_or(0) + SYNC_LOOKBACK_SECS;
+
+            if block_ts < grace_end {
+                println!("[{}][Indexer] Dropping Verified for epoch {} - claim outside sync window", self.route.name, epoch);
+                return;
+            }
+            panic!("[{}] Verified for epoch {} but claim not found - this is a bug", self.route.name, epoch);
+        }
 
         let claim = self.claim_store.get(epoch);
 
