@@ -43,7 +43,8 @@ async fn test_challenge_bad_claim() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let wallet_address = c.wallet.default_signer().address();
+    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
     indexer.initialize().await;
     TaskStoreImport::new(&schedule_path).set_on_sync(true);
     let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
@@ -98,7 +99,7 @@ async fn test_challenge_bad_claim_gnosis() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
     indexer.initialize().await;
     TaskStoreImport::new(&schedule_path).set_on_sync(true);
     let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
@@ -185,7 +186,8 @@ async fn test_start_verification_drops_task_when_claim_challenged() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let wallet_address = c.wallet.default_signer().address();
+    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
     indexer.initialize().await;
     let task_store = TaskStore::new(&schedule_path);
     task_store.set_on_sync(true);

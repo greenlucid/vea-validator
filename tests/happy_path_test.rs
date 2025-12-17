@@ -42,7 +42,8 @@ async fn test_start_verification() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let wallet_address = c.wallet.default_signer().address();
+    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
     indexer.initialize().await;
     TaskStore::new(&schedule_path).set_on_sync(true);
     let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
@@ -90,7 +91,8 @@ async fn test_verify_snapshot() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let wallet_address = c.wallet.default_signer().address();
+    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
     indexer.initialize().await;
     TaskStore::new(&schedule_path).set_on_sync(true);
     let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path);
@@ -145,7 +147,8 @@ async fn test_full_happy_path_via_indexer() {
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
     let claims_path = test_dir.path().join("claims.json");
-    let indexer = EventIndexer::new(route.clone(), schedule_path.clone(), claims_path.clone());
+    let wallet_address = c.wallet.default_signer().address();
+    let indexer = EventIndexer::new(route.clone(), wallet_address, schedule_path.clone(), claims_path.clone());
     indexer.initialize().await;
     TaskStore::new(&schedule_path).set_on_sync(true);
     let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), schedule_path, claims_path.clone());
@@ -176,7 +179,7 @@ async fn test_full_happy_path_via_indexer() {
     advance_time(15 * 60 + 10).await;
     indexer.scan_once().await;
 
-    let balance_after_withdraw = outbox_provider.get_balance(c.wallet.default_signer().address()).await.unwrap();
+    let balance_after_withdraw = outbox_provider.get_balance(wallet_address).await.unwrap();
     assert!(balance_after_withdraw > balance_after_claim, "Deposit was not returned to claimer");
 
     let claim_store = vea_validator::tasks::ClaimStore::new(claims_path);

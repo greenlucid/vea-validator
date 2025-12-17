@@ -64,6 +64,7 @@ async fn find_block_by_timestamp(provider: &DynProvider<Ethereum>, target_ts: u6
 
 pub struct EventIndexer {
     route: Route,
+    wallet_address: Address,
     task_store: TaskStore,
     claim_store: ClaimStore,
     inbox_catchup: (AtomicU64, AtomicU64),
@@ -73,11 +74,13 @@ pub struct EventIndexer {
 impl EventIndexer {
     pub fn new(
         route: Route,
+        wallet_address: Address,
         schedule_path: impl Into<PathBuf>,
         claims_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
             route,
+            wallet_address,
             task_store: TaskStore::new(schedule_path),
             claim_store: ClaimStore::new(claims_path),
             inbox_catchup: (AtomicU64::new(0), AtomicU64::new(0)),
@@ -277,6 +280,14 @@ impl EventIndexer {
             Some(h) => h,
             None => return,
         };
+
+        let tx = self.route.inbox_provider.get_transaction_by_hash(tx_hash).await
+            .expect("Failed to get transaction")
+            .expect("Transaction not found");
+        if tx.inner.signer() != self.wallet_address {
+            println!("[{}][Indexer] SnapshotSent for epoch {} not from validator, skipping", self.route.name, epoch);
+            return;
+        }
 
         match self.fetch_l2_to_l1_from_tx(tx_hash, epoch).await {
             Some(task) => {
