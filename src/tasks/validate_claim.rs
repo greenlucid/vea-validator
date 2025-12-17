@@ -20,15 +20,15 @@ pub async fn execute(
     let correct_state_root = inbox.snapshots(U256::from(epoch)).call().await?;
 
     if claimed_state_root == correct_state_root {
-        println!("[{}] Claim for epoch {} is VALID", route.name, epoch);
+        println!("[{}][task::validate_claim] Epoch {} VALID", route.name, epoch);
         task_store.add_task(Task {
             epoch,
             execute_after: current_timestamp + START_VERIFICATION_DELAY,
             kind: TaskKind::StartVerification,
         });
     } else {
-        println!("[{}] Claim for epoch {} is INVALID! Challenging immediately", route.name, epoch);
-        println!("[{}] Claimed: {:?}, Correct: {:?}", route.name, claimed_state_root, correct_state_root);
+        println!("[{}][task::validate_claim] Epoch {} INVALID - challenging", route.name, epoch);
+        println!("[{}][task::validate_claim] Claimed: {:?}, Correct: {:?}", route.name, claimed_state_root, correct_state_root);
         challenge::execute(config, route, epoch, claim_store).await?;
     }
 

@@ -12,7 +12,7 @@ pub async fn execute(
 
     let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
     if claim_hash == FixedBytes::<32>::ZERO {
-        println!("[{}] Deposit for epoch {} already withdrawn", route.name, epoch);
+        println!("[{}][task::withdraw_deposit] Epoch {} already withdrawn", route.name, epoch);
         claim_store.remove(epoch);
         return Ok(());
     }

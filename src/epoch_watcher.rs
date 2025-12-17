@@ -41,7 +41,7 @@ impl EpochWatcher {
             let time_until_next_epoch = next_epoch_start.saturating_sub(now);
 
             if time_until_next_epoch <= BEFORE_EPOCH_BUFFER && last_before_epoch != Some(current_epoch) {
-                println!("[{}] Triggering saveSnapshot for epoch {}", self.route.name, current_epoch);
+                println!("[{}][EpochWatcher] Saving snapshot for epoch {}", self.route.name, current_epoch);
                 tasks::save_snapshot::execute(&self.route, current_epoch).await
                     .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to save snapshot for epoch {}: {}", self.route.name, current_epoch, e));
                 last_before_epoch = Some(current_epoch);
@@ -52,9 +52,9 @@ impl EpochWatcher {
                 if time_since_epoch_start >= AFTER_EPOCH_BUFFER && current_epoch > 0 {
                     let prev_epoch = current_epoch - 1;
                     if last_after_epoch != Some(prev_epoch) {
-                        println!("[{}] Triggering claim for epoch {}", self.route.name, prev_epoch);
+                        println!("[{}][EpochWatcher] Checking claim for epoch {}", self.route.name, prev_epoch);
                         tasks::claim::execute(&self.route, prev_epoch, &self.claim_store, now).await
-                            .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to handle claim for epoch {}: {}", self.route.name, prev_epoch, e));
+                            .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to claim epoch {}: {}", self.route.name, prev_epoch, e));
                         last_after_epoch = Some(prev_epoch);
                     }
                 }

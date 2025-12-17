@@ -20,7 +20,7 @@ pub async fn execute(
         let weth = IWETH::new(weth_address, route.outbox_provider.clone());
         let balance = weth.balanceOf(wallet_address).call().await?;
         if balance < deposit {
-            println!("[{}] Insufficient WETH for challenge (have {}, need {}), will retry", route.name, balance, deposit);
+            println!("[{}][task::challenge] Insufficient WETH (have {}, need {}), will retry", route.name, balance, deposit);
             return Err("Insufficient funds".into());
         }
 
@@ -36,7 +36,7 @@ pub async fn execute(
 
         let balance = route.outbox_provider.get_balance(wallet_address).await?;
         if balance < deposit {
-            println!("[{}] Insufficient ETH for challenge (have {}, need {}), will retry", route.name, balance, deposit);
+            println!("[{}][task::challenge] Insufficient ETH (have {}, need {}), will retry", route.name, balance, deposit);
             return Err("Insufficient funds".into());
         }
 

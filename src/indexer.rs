@@ -223,14 +223,15 @@ impl EventIndexer {
                     Outbox => self.task_store.update_outbox_block(to_block),
                 }
 
-                let start = catchup_start.load(Ordering::Relaxed);
-                let start = if start == 0 { from_block } else { start };
-                let total = target_block.saturating_sub(start);
-                let done = to_block.saturating_sub(start);
-                let pct = if total > 0 { (done * 100) / total } else { 100 };
-                println!("[{}][Indexer] {} {}-{} ({}% synced)", self.route.name, label, from_block, to_block, pct);
-
                 let is_done = to_block >= target_block;
+
+                let start = catchup_start.load(Ordering::Relaxed);
+                if start != 0 && !is_done {
+                    let total = target_block.saturating_sub(start);
+                    let done = to_block.saturating_sub(start);
+                    let pct = if total > 0 { (done * 100) / total } else { 100 };
+                    println!("[{}][Indexer] {} {}-{} ({}%)", self.route.name, label, from_block, to_block, pct);
+                }
                 if is_done {
                     catchup_start.store(0, Ordering::Relaxed);
                     catchup_target.store(0, Ordering::Relaxed);
@@ -364,14 +365,6 @@ impl EventIndexer {
             panic!("[{}] VerificationStarted for epoch {} but claim not found - this is a bug", self.route.name, epoch);
         }
 
-        let mut state = self.task_store.load();
-        state.tasks.retain(|t| !(t.epoch == epoch && matches!(t.kind, TaskKind::StartVerification)));
-
-        if state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::VerifySnapshot)) {
-            self.task_store.save(&state);
-            return;
-        }
-
         let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await as u32;
         let block_num = log.block_number.expect("Log missing block_number") as u32;
 
@@ -385,13 +378,11 @@ impl EventIndexer {
 
         let execute_after = (block_ts as u64) + min_challenge_period;
 
-        state.tasks.push(Task {
+        self.task_store.add_task(Task {
             epoch,
             execute_after,
             kind: TaskKind::VerifySnapshot,
         });
-        println!("[TaskStore] Scheduling VerifySnapshot for epoch {} at {}", epoch, execute_after);
-        self.task_store.save(&state);
     }
 
     async fn handle_challenged_event(&self, log: &alloy::rpc::types::Log) {

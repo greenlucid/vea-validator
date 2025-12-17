@@ -218,6 +218,12 @@ impl TaskStore {
         Self { path: path.into() }
     }
 
+    fn label(&self) -> String {
+        self.path.file_stem()
+            .map(|s| s.to_string_lossy().to_uppercase().replace("-", "_"))
+            .unwrap_or_default()
+    }
+
     pub fn load(&self) -> RouteState {
         match fs::read_to_string(&self.path) {
             Ok(contents) => serde_json::from_str(&contents).expect("Failed to parse schedule file - data corrupted"),
@@ -235,7 +241,7 @@ impl TaskStore {
     }
 
     pub fn add_task(&self, task: Task) {
-        println!("[TaskStore] Scheduling {} for epoch {} at {}", task.kind.name(), task.epoch, task.execute_after);
+        println!("[{}][TaskStore] Scheduling {} for epoch {} at {}", self.label(), task.kind.name(), task.epoch, task.execute_after);
         let mut state = self.load();
         state.tasks.push(task);
         self.save(&state);

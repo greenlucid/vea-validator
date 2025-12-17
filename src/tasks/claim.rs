@@ -16,25 +16,25 @@ pub async fn execute(
 
     let state_root = inbox.snapshots(U256::from(epoch)).call().await?;
     if state_root == FixedBytes::<32>::ZERO {
-        println!("[{}] No snapshot for epoch {}, skipping claim", route.name, epoch);
+        println!("[{}][task::claim] Epoch {} has no snapshot", route.name, epoch);
         return Ok(());
     }
 
     let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
     if claim_hash != FixedBytes::<32>::ZERO {
-        println!("[{}] Epoch {} already claimed, skipping", route.name, epoch);
+        println!("[{}][task::claim] Epoch {} already claimed", route.name, epoch);
         return Ok(());
     }
 
     let current_state_root = outbox.stateRoot().call().await?;
     if current_state_root == state_root {
-        println!("[{}] State root for epoch {} already verified, skipping", route.name, epoch);
+        println!("[{}][task::claim] Epoch {} state root already verified on outbox", route.name, epoch);
         return Ok(());
     }
 
     let since = (current_timestamp as u32).saturating_sub(SEVEN_DAYS_SECS);
     if claim_store.has_state_root_in_recent_claims(state_root, since) {
-        println!("[{}] State root for epoch {} already in pending claim, skipping", route.name, epoch);
+        println!("[{}][task::claim] Epoch {} state root already in pending claim", route.name, epoch);
         return Ok(());
     }
 
