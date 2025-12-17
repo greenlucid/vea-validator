@@ -45,7 +45,13 @@ pub async fn check_balances(c: &ValidatorConfig, routes: &[Route]) -> Result<(),
     if weth_balance < gnosis_deposit {
         panic!("FATAL: Insufficient WETH balance on Gnosis. Need {} wei for deposit, have {} wei", gnosis_deposit, weth_balance);
     }
-    println!("✓ Balance check passed: ETH={} wei, WETH={} wei", eth_balance, weth_balance);
+
+    let xdai_balance = gnosis_provider.get_balance(wallet_address).await?;
+    let xdai_min = U256::from(10_000_000_000_000_000u64);
+    if xdai_balance < xdai_min {
+        panic!("FATAL: Insufficient xDAI on Gnosis for gas. Need {} wei, have {} wei", xdai_min, xdai_balance);
+    }
+    println!("✓ Balance check passed: ETH={} wei, WETH={} wei, xDAI={} wei", eth_balance, weth_balance, xdai_balance);
 
     ensure_weth_approval(c, gnosis_provider, wallet_address).await?;
 
