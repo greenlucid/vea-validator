@@ -34,7 +34,9 @@ Start the local devnet (L1 + L2 anvil chains with deployed contracts):
 ./scripts/full-devnet.sh
 ```
 
-Run tests:
+Leave it running. This will automatically create a `.env.local` for you to run the tests.
+
+Run tests on a different terminal:
 
 ```bash
 source .env.local && cargo test
@@ -56,6 +58,18 @@ Edit `.env.test` and add your private key, then:
 ```bash
 source .env.test && cargo run
 ```
+
+## Configuration
+
+### RPC Redundancy
+
+RPC URLs support comma-separated values for failover:
+
+```bash
+export ETHEREUM_RPC_URL=https://rpc1.example.com,https://rpc2.example.com,https://rpc3.example.com
+```
+
+The validator will automatically try the next RPC if one fails.
 
 ## Learn More
 
