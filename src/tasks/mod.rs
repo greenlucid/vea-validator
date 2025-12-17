@@ -30,13 +30,14 @@ pub async fn was_event_emitted(
         Ok(b) => b,
         Err(_) => return false,
     };
-    let from_block = current_block.saturating_sub(100);
+    let from_block = current_block.saturating_sub(500);
 
     let sig = alloy::primitives::keccak256(event_sig);
     let filter = Filter::new()
         .address(address)
         .event_signature(sig)
-        .from_block(from_block);
+        .from_block(from_block)
+        .to_block(from_block + 1000);
 
     match provider.get_logs(&filter).await {
         Ok(logs) => logs.iter().any(|log| {
