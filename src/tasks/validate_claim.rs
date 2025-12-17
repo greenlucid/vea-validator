@@ -19,11 +19,6 @@ pub async fn execute(
     let inbox = IVeaInbox::new(route.inbox_address, route.inbox_provider.clone());
     let correct_state_root = inbox.snapshots(U256::from(epoch)).call().await?;
 
-    if correct_state_root == FixedBytes::<32>::ZERO {
-        println!("[{}] No snapshot on inbox for epoch {}, cannot verify claim", route.name, epoch);
-        return Ok(());
-    }
-
     if claimed_state_root == correct_state_root {
         println!("[{}] Claim for epoch {} is VALID", route.name, epoch);
         task_store.add_task(Task {
