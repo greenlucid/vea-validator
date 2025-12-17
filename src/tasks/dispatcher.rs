@@ -6,7 +6,7 @@ use crate::config::{Route, ValidatorConfig};
 use crate::tasks;
 use crate::tasks::{Task, TaskKind, TaskStore, ClaimStore};
 
-const POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
+const POLL_INTERVAL: Duration = Duration::from_secs(1 * 60);
 
 pub struct TaskDispatcher {
     config: ValidatorConfig,
