@@ -1,4 +1,4 @@
-use alloy::primitives::U256;
+use alloy::primitives::{FixedBytes, U256};
 use crate::config::Route;
 use crate::contracts::{IVeaOutbox, Party};
 use crate::tasks::{send_tx, ClaimStore};
@@ -8,8 +8,16 @@ pub async fn execute(
     epoch: u64,
     claim_store: &ClaimStore,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let claim = claim_store.get_claim(epoch);
     let outbox = IVeaOutbox::new(route.outbox_address, route.outbox_provider.clone());
+
+    let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
+    if claim_hash == FixedBytes::<32>::ZERO {
+        println!("[{}] Deposit for epoch {} already withdrawn", route.name, epoch);
+        claim_store.remove(epoch);
+        return Ok(());
+    }
+
+    let claim = claim_store.get_claim(epoch);
 
     let result = match claim.honest {
         Party::Claimer => {
