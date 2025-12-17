@@ -96,6 +96,10 @@ impl TaskDispatcher {
                         self.task_store.reschedule_task(task, current_timestamp + 15 * 60);
                         true
                     }
+                    Err(e) if e.to_string() == "VerificationStarted" => {
+                        self.task_store.reschedule_task(task, current_timestamp + 15 * 60);
+                        true
+                    }
                     Err(_) => false,
                 }
             }

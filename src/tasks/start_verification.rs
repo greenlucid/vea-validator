@@ -1,7 +1,7 @@
 use alloy::primitives::{Address, U256};
 use crate::config::Route;
 use crate::contracts::IVeaOutbox;
-use crate::tasks::{send_tx, ClaimStore};
+use crate::tasks::{send_tx, was_event_emitted, ClaimStore};
 
 pub async fn execute(
     route: &Route,
@@ -16,10 +16,23 @@ pub async fn execute(
 
     let claim = claim_store.get_claim(epoch);
     let outbox = IVeaOutbox::new(route.outbox_address, route.outbox_provider.clone());
-    send_tx(
+    let result = send_tx(
         outbox.startVerification(U256::from(epoch), claim).send().await,
         "startVerification",
         route.name,
-        &["already", "challenged"],
-    ).await
+        &["already"],
+    ).await;
+
+    if let Err(e) = result {
+        if was_event_emitted(&route.outbox_provider, route.outbox_address, "VerificationStarted(uint256)", epoch).await {
+            println!("[{}][task::start_verification] Epoch {} already started by another validator", route.name, epoch);
+            return Ok(());
+        }
+        if was_event_emitted(&route.outbox_provider, route.outbox_address, "Challenged(uint256,address)", epoch).await {
+            println!("[{}][task::start_verification] Epoch {} was challenged, dropping task", route.name, epoch);
+            return Ok(());
+        }
+        return Err(e);
+    }
+    Ok(())
 }

@@ -219,17 +219,6 @@ async fn test_start_verification_drops_task_when_claim_challenged() {
     dispatcher.process_pending().await;
 
     let state = task_store.load();
-    assert!(state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::StartVerification)),
-        "Task should still exist after first retry (Invalid claim - stale data)");
-
-    indexer.scan_once().await;
-
-    let claim_data = vea_validator::tasks::ClaimStore::new(&claims_path).get(epoch);
-    assert_ne!(claim_data.challenger, Address::ZERO, "ClaimStore should be updated with challenger");
-
-    dispatcher.process_pending().await;
-
-    let state = task_store.load();
     assert!(!state.tasks.iter().any(|t| t.epoch == epoch && matches!(t.kind, TaskKind::StartVerification)),
-        "Task should be dropped after retry with updated claim (Claim is challenged)");
+        "Task should be dropped immediately when Challenged event detected");
 }

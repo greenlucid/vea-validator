@@ -12,12 +12,41 @@ pub mod withdraw_deposit;
 use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::contract::Error as ContractError;
 use alloy::network::Ethereum;
-use alloy::providers::PendingTransactionBuilder;
+use alloy::providers::{DynProvider, PendingTransactionBuilder, Provider};
+use alloy::rpc::types::Filter;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
 use crate::contracts::{Claim, Party};
+
+pub async fn was_event_emitted(
+    provider: &DynProvider<Ethereum>,
+    address: Address,
+    event_sig: &str,
+    epoch: u64,
+) -> bool {
+    let current_block = match provider.get_block_number().await {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let from_block = current_block.saturating_sub(100);
+
+    let sig = alloy::primitives::keccak256(event_sig);
+    let filter = Filter::new()
+        .address(address)
+        .event_signature(sig)
+        .from_block(from_block);
+
+    match provider.get_logs(&filter).await {
+        Ok(logs) => logs.iter().any(|log| {
+            log.topics().get(1)
+                .map(|t| U256::from_be_bytes(t.0).to::<u64>() == epoch)
+                .unwrap_or(false)
+        }),
+        Err(_) => false,
+    }
+}
 
 pub async fn send_tx(
     result: Result<PendingTransactionBuilder<Ethereum>, ContractError>,

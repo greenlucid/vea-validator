@@ -26,7 +26,7 @@ pub async fn execute(
                 outbox.withdrawClaimDeposit(U256::from(epoch), claim).send().await,
                 "withdrawClaimDeposit",
                 route.name,
-                &["already"],
+                &[],
             ).await
         }
         Party::Challenger => {
@@ -34,14 +34,22 @@ pub async fn execute(
                 outbox.withdrawChallengeDeposit(U256::from(epoch), claim).send().await,
                 "withdrawChallengeDeposit",
                 route.name,
-                &["already"],
+                &[],
             ).await
         }
         _ => panic!("Cannot withdraw - honest party not determined for epoch {}", epoch),
     };
 
-    if result.is_ok() {
-        claim_store.remove(epoch);
+    if let Err(e) = result {
+        let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
+        if claim_hash == FixedBytes::<32>::ZERO {
+            println!("[{}][task::withdraw_deposit] Epoch {} already withdrawn by another validator", route.name, epoch);
+            claim_store.remove(epoch);
+            return Ok(());
+        }
+        return Err(e);
     }
-    result
+
+    claim_store.remove(epoch);
+    Ok(())
 }
