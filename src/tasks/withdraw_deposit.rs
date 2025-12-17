@@ -18,6 +18,7 @@ pub async fn execute(
     }
 
     let claim = claim_store.get_claim(epoch);
+    println!("[{}][task::withdraw_deposit] Epoch {} - {:?} was honest, withdrawing deposit", route.name, epoch, claim.honest);
 
     let result = match claim.honest {
         Party::Claimer => {

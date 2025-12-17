@@ -452,8 +452,6 @@ impl EventIndexer {
             c.honest = honest.to_string();
         });
 
-        println!("[{}][Indexer] Verified event for epoch {} - {} was honest, withdrawing deposit immediately", self.route.name, epoch, honest);
-
         tasks::withdraw_deposit::execute(&self.route, epoch, &self.claim_store).await
             .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to withdraw deposit for epoch {}: {}", self.route.name, epoch, e));
     }
