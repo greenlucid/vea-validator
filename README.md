@@ -1,6 +1,6 @@
 # VEA Validator
 
-Rust validator for the [VEA](https://vea.ninja) cross-chain messaging protocol. Monitors claims on the bridge and challenges dishonest ones.
+Rust validator for the [VEA](https://vea.ninja) cross-chain messaging protocol. Monitors claims, challenges fraud, advances verification, relays L2→L1 messages, and withdraws deposits.
 
 Supports routes:
 - Arbitrum → Ethereum
@@ -60,6 +60,13 @@ source .env.test && cargo run
 ```
 
 ## Configuration
+
+### MAKE_CLAIMS
+
+```bash
+export MAKE_CLAIMS=false  # (default) Only monitor and challenge fraud
+export MAKE_CLAIMS=true   # Also claim epochs (locks deposit until verified)
+```
 
 ### RPC Redundancy
 
