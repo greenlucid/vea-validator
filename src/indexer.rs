@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::time::{sleep, Duration};
 
 use crate::config::Route;
-use crate::contracts::IVeaInbox;
+use crate::contracts::{IVeaInbox, IArbSys};
 use crate::tasks::{Task, TaskKind, TaskStore, ClaimStore, ClaimData};
 
 use alloy::network::Ethereum;
@@ -490,45 +490,14 @@ impl EventIndexer {
             .expect("Failed to get transaction receipt")
             .expect("Transaction receipt not found");
 
-        let l2_to_l1_tx_sig = alloy::primitives::keccak256(
-            "L2ToL1Tx(address,address,uint256,uint256,uint256,uint256,uint256,uint256,bytes)"
-        );
-
         for log in receipt.inner.logs() {
             if log.address() != ARB_SYS {
                 continue;
             }
-            if log.topics().first() != Some(&l2_to_l1_tx_sig) {
-                continue;
-            }
-            if log.topics().len() < 4 {
-                continue;
-            }
 
-            let caller = Address::from_slice(&log.topics()[1].0[12..]);
-            let destination = Address::from_slice(&log.topics()[2].0[12..]);
-
-            let data = &log.data().data;
-            if data.len() < 192 {
-                continue;
-            }
-
-            let position = U256::from_be_slice(&data[0..32]);
-            let arb_block_num = U256::from_be_slice(&data[32..64]).to::<u64>();
-            let eth_block_num = U256::from_be_slice(&data[64..96]).to::<u64>();
-            let timestamp = U256::from_be_slice(&data[96..128]).to::<u64>();
-            let callvalue = U256::from_be_slice(&data[128..160]);
-
-            let data_offset = U256::from_be_slice(&data[160..192]).to::<usize>();
-            let calldata = if data.len() > data_offset + 32 {
-                let data_len = U256::from_be_slice(&data[data_offset..data_offset + 32]).to::<usize>();
-                if data.len() >= data_offset + 32 + data_len {
-                    Bytes::copy_from_slice(&data[data_offset + 32..data_offset + 32 + data_len])
-                } else {
-                    Bytes::new()
-                }
-            } else {
-                Bytes::new()
+            let decoded = match log.log_decode::<IArbSys::L2ToL1Tx>() {
+                Ok(d) => d,
+                Err(_) => continue,
             };
 
             let block_number = receipt.block_number.expect("Receipt missing block_number");
@@ -540,14 +509,14 @@ impl EventIndexer {
             return Some((
                 epoch,
                 block_timestamp + self.route.settings.relay_delay_secs,
-                position,
-                caller,
-                destination,
-                arb_block_num,
-                eth_block_num,
-                timestamp,
-                callvalue,
-                calldata,
+                decoded.inner.position,
+                decoded.inner.data.caller,
+                decoded.inner.destination,
+                decoded.inner.data.arbBlockNum.to::<u64>(),
+                decoded.inner.data.ethBlockNum.to::<u64>(),
+                decoded.inner.data.timestamp.to::<u64>(),
+                decoded.inner.data.callvalue,
+                decoded.inner.data.data.clone(),
             ));
         }
         None
