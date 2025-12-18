@@ -388,6 +388,8 @@ impl EventIndexer {
             c.blocknumber_verification = block_num;
         });
 
+        self.task_store.lock().unwrap().invalidate_tasks(epoch, &["StartVerification"]);
+
         let execute_after = (block_ts as u64) + self.route.settings.min_challenge_period;
 
         self.task_store.lock().unwrap().add_task(Task {
@@ -421,6 +423,8 @@ impl EventIndexer {
         self.claim_store.lock().unwrap().update(epoch, |c| {
             c.challenger = challenger;
         });
+
+        self.task_store.lock().unwrap().invalidate_tasks(epoch, &["ValidateClaim", "Challenge", "StartVerification", "VerifySnapshot"]);
 
         let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
         self.task_store.lock().unwrap().add_task(Task {
@@ -466,6 +470,8 @@ impl EventIndexer {
         self.claim_store.lock().unwrap().update(epoch, |c| {
             c.honest = honest.to_string();
         });
+
+        self.task_store.lock().unwrap().invalidate_tasks(epoch, &["ValidateClaim", "Challenge", "StartVerification", "VerifySnapshot", "ExecuteRelay"]);
 
         self.task_store.lock().unwrap().add_task(Task {
             epoch,

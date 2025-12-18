@@ -50,5 +50,5 @@ pub async fn execute(
         }
     }
 
-    send_tx(inbox.saveSnapshot().send().await, "saveSnapshot", route.name, &[]).await
+    send_tx(inbox.saveSnapshot().send().await, "saveSnapshot", route.name).await
 }

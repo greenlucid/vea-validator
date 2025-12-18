@@ -39,13 +39,12 @@ pub async fn execute(
         return Ok(());
     }
 
-    if route.weth_address.is_some() {
+    let result = if route.weth_address.is_some() {
         let outbox = IVeaOutboxArbToGnosis::new(route.outbox_address, route.outbox_provider.clone());
         send_tx(
             outbox.claim(U256::from(epoch), state_root).send().await,
             "claim",
             route.name,
-            &["already"],
         ).await
     } else {
         let outbox = IVeaOutboxArbToEth::new(route.outbox_address, route.outbox_provider.clone());
@@ -54,7 +53,16 @@ pub async fn execute(
             outbox.claim(U256::from(epoch), state_root).value(deposit).send().await,
             "claim",
             route.name,
-            &["already"],
         ).await
+    };
+
+    if let Err(e) = result {
+        let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
+        if claim_hash != FixedBytes::<32>::ZERO {
+            println!("[{}][task::claim] Epoch {} already claimed by another validator", route.name, epoch);
+            return Ok(());
+        }
+        return Err(e);
     }
+    Ok(())
 }

@@ -18,7 +18,6 @@ pub async fn execute(
                 inbox.sendSnapshot(U256::from(epoch), claim).send().await,
                 "sendSnapshot",
                 route.name,
-                &[],
             ).await
         }
         "ARB_TO_GNOSIS" => {
@@ -28,7 +27,6 @@ pub async fn execute(
                 inbox.sendSnapshot(U256::from(epoch), gas_limit, claim).send().await,
                 "sendSnapshot",
                 route.name,
-                &[],
             ).await
         }
         _ => panic!("Unknown route: {}", route.name),

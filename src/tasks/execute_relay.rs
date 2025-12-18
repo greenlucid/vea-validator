@@ -48,7 +48,6 @@ pub async fn execute(
         ).send().await,
         "executeTransaction",
         route.name,
-        &[],
     ).await;
 
     if let Err(e) = &result {

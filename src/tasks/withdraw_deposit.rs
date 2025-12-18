@@ -27,7 +27,6 @@ pub async fn execute(
                 outbox.withdrawClaimDeposit(U256::from(epoch), claim).send().await,
                 "withdrawClaimDeposit",
                 route.name,
-                &[],
             ).await
         }
         Party::Challenger => {
@@ -35,7 +34,6 @@ pub async fn execute(
                 outbox.withdrawChallengeDeposit(U256::from(epoch), claim).send().await,
                 "withdrawChallengeDeposit",
                 route.name,
-                &[],
             ).await
         }
         _ => panic!("Cannot withdraw - honest party not determined for epoch {}", epoch),

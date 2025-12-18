@@ -113,7 +113,6 @@ pub async fn send_tx(
     result: Result<PendingTransactionBuilder<Ethereum>, ContractError>,
     action: &str,
     route_name: &str,
-    race_ok: &[&str],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match result {
         Ok(pending) => {
@@ -126,14 +125,11 @@ pub async fn send_tx(
         }
         Err(e) => {
             let err_msg = e.to_string();
-            for pattern in race_ok {
-                if err_msg.contains(pattern) {
-                    println!("[{}] {} already done", route_name, action);
-                    return Ok(());
-                }
-            }
             match decode_revert_reason(&err_msg) {
-                Some(reason) => Err(format!("[{}] {} reverted: {}", route_name, action, reason).into()),
+                Some(reason) => {
+                    eprintln!("[{}] {} reverted: {}", route_name, action, reason);
+                    Err(format!("[{}] {} reverted: {}", route_name, action, reason).into())
+                }
                 None => Err(e.into()),
             }
         }
@@ -394,6 +390,17 @@ impl TaskStore {
 
     pub fn is_on_sync(&self) -> bool {
         self.load().on_sync
+    }
+
+    pub fn invalidate_tasks(&self, epoch: u64, kinds: &[&str]) {
+        let mut state = self.load();
+        let before = state.tasks.len();
+        state.tasks.retain(|t| !(t.epoch == epoch && kinds.contains(&t.kind.name())));
+        let removed = before - state.tasks.len();
+        if removed > 0 {
+            println!("[{}][TaskStore] Invalidated {} tasks for epoch {}", self.label(), removed, epoch);
+        }
+        self.save(&state);
     }
 }
 

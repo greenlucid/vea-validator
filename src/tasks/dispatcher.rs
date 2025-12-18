@@ -66,6 +66,7 @@ impl TaskDispatcher {
             println!("[{}][Dispatcher] Executing {} for epoch {}", self.route.name, task.kind.name(), task.epoch);
             let success = self.execute_task(&task, now).await;
             if success {
+                println!("[{}][Dispatcher] Completed {} for epoch {}", self.route.name, task.kind.name(), task.epoch);
                 self.task_store.lock().unwrap().remove_task(&task);
             }
         }
@@ -100,6 +101,10 @@ impl TaskDispatcher {
                         self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 15 * 60);
                         true
                     }
+                    Err(e) if e.to_string().contains("Invalid claim") => {
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 30 * 60);
+                        true
+                    }
                     Err(_) => false,
                 }
             }
@@ -107,10 +112,24 @@ impl TaskDispatcher {
                 tasks::send_snapshot::execute(&self.route, epoch, &self.claim_store).await.is_ok()
             }
             TaskKind::StartVerification => {
-                tasks::start_verification::execute(&self.route, epoch, &self.claim_store).await.is_ok()
+                match tasks::start_verification::execute(&self.route, epoch, &self.claim_store).await {
+                    Ok(_) => true,
+                    Err(e) if e.to_string().contains("Invalid claim") => {
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 30 * 60);
+                        true
+                    }
+                    Err(_) => false,
+                }
             }
             TaskKind::VerifySnapshot => {
-                tasks::verify_snapshot::execute(&self.route, epoch, &self.claim_store).await.is_ok()
+                match tasks::verify_snapshot::execute(&self.route, epoch, &self.claim_store).await {
+                    Ok(_) => true,
+                    Err(e) if e.to_string().contains("Invalid claim") => {
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 30 * 60);
+                        true
+                    }
+                    Err(_) => false,
+                }
             }
             TaskKind::ExecuteRelay { position, l2_sender, dest_addr, l2_block, l1_block, l2_timestamp, amount, data } => {
                 match tasks::execute_relay::execute(

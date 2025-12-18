@@ -29,7 +29,6 @@ pub async fn execute(
             outbox.challenge(U256::from(epoch), claim).send().await,
             "challenge",
             route.name,
-            &["already"],
         ).await
     } else {
         let outbox = IVeaOutboxArbToEth::new(route.outbox_address, route.outbox_provider.clone());
@@ -45,7 +44,6 @@ pub async fn execute(
             outbox.challenge(U256::from(epoch), claim).value(deposit).send().await,
             "challenge",
             route.name,
-            &["already"],
         ).await
     };
 

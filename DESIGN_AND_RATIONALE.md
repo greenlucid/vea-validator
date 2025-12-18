@@ -71,6 +71,24 @@ On startup, indexer initializes from `now - sync_lookback_secs`. The lookback is
 - **RPC failures during indexing**: logged, retry next poll
 - **Task failures**: task stays in queue, retried next poll
 - **`Insufficient funds` on Challenge**: rescheduled +15min
+- **`Invalid claim` reverts**: rescheduled +30min (see below)
+
+### Proactive Task Invalidation
+
+When the indexer processes certain events, it proactively removes tasks that are no longer possible:
+
+| Event | Tasks Invalidated |
+|-------|-------------------|
+| `Claimed` | (none) |
+| `VerificationStarted` | `StartVerification` |
+| `Challenged` | `ValidateClaim`, `Challenge`, `StartVerification`, `VerifySnapshot` |
+| `Verified` | `ValidateClaim`, `Challenge`, `StartVerification`, `VerifySnapshot`, `ExecuteRelay` |
+
+This prevents wasted execution attempts and keeps the task queue clean.
+
+### Invalid Claim Rescheduling
+
+Due to the 15min finality buffer, someone can change claim state right before we execute a task. When `challenge`, `start_verification`, or `verify_snapshot` reverts with "Invalid claim" (claimHash mismatch), we reschedule +30min to give the indexer time to catch up and update ClaimStore with fresh claim data.
 
 ### Race Conditions
 
@@ -79,20 +97,17 @@ Each task has its own way of detecting and handling race conditions (another val
 | Task | Detection | Handling |
 |------|-----------|----------|
 | `save_snapshot` | snapshot count unchanged | skip (no-op) |
-| `claim` | `claimHashes[epoch] != 0` | drop task |
+| `claim` | `claimHashes[epoch] != 0` (pre-check) | drop task |
 | `claim` | `stateRoot` already matches | drop task |
 | `claim` | state root in pending claim | drop task |
-| `claim` | revert contains "already" | drop task |
-| `challenge` | revert contains "already" | drop task |
+| `claim` | on revert: `claimHashes[epoch] != 0` | drop task |
 | `challenge` | on revert: `Challenged` event emitted | drop task |
 | `challenge` | on revert: `VerificationStarted` event emitted | reschedule +15min |
 | `send_snapshot` | (none - cheap, idempotent) | always try |
 | `start_verification` | `challenger != 0` | drop task |
-| `start_verification` | revert contains "already" | drop task |
 | `start_verification` | on revert: `VerificationStarted` event emitted | drop task |
 | `start_verification` | on revert: `Challenged` event emitted | drop task |
 | `verify_snapshot` | `challenger != 0` | drop task |
-| `verify_snapshot` | revert contains "already" | drop task |
 | `verify_snapshot` | on revert: `Verified` event emitted | drop task |
 | `verify_snapshot` | on revert: `Challenged` event emitted | drop task |
 | `execute_relay` | `isSpent(position) == true` | drop task |
@@ -101,9 +116,7 @@ Each task has its own way of detecting and handling race conditions (another val
 | `withdraw_deposit` | `claimHashes[epoch] == 0` (pre-check) | drop task |
 | `withdraw_deposit` | on revert: `claimHashes[epoch] == 0` | drop task |
 
-**Why "already" reverts are acceptable:** The indexer updates the ClaimStore when it sees events, but doesn't proactively clean up stale tasks from the scheduler. Due to our conservative finality buffer, the indexer may process an event (e.g., `Challenged`) and update the ClaimStore before the dispatcher attempts a now-stale task (e.g., `StartVerification`). The "already" revert safely handles this case. A future optimization could have the indexer drop stale tasks when processing events.
-
-**Frontrun detection via event checks:** When a task reverts with "Invalid claim" (claimHash mismatch), we check if the expected event was emitted in recent blocks (last 500 blocks, capped at 1000 block range for RPC compatibility). This detects frontruns where another validator's tx landed between our pre-check and tx execution, changing the claimHash. If the event exists, the job was done - we drop the task. For `challenge`, if `VerificationStarted` was emitted (rare edge case during resync), we reschedule +15min to wait for finality before retrying with updated claim data.
+**Frontrun detection via event checks:** When a task reverts, we check if the expected event was emitted in recent blocks (last 500 blocks, capped at 1000 block range for RPC compatibility). This detects frontruns where another validator's tx landed between our pre-check and tx execution. If the event exists, the job was done - we drop the task. For `challenge`, if `VerificationStarted` was emitted (rare edge case during resync), we reschedule +15min to wait for finality before retrying with updated claim data.
 
 ### Missing Claim Data
 
