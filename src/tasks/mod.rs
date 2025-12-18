@@ -20,6 +20,66 @@ use std::path::PathBuf;
 
 use crate::contracts::{Claim, Party};
 
+fn decode_revert_reason(err_msg: &str) -> Option<String> {
+    let data_prefix = "data: \"0x";
+    let start = err_msg.find(data_prefix)? + data_prefix.len();
+    let end = err_msg[start..].find('"')? + start;
+    let hex_data = &err_msg[start..end];
+
+    if hex_data.is_empty() {
+        return Some("(empty)".to_string());
+    }
+
+    if hex_data.len() < 8 {
+        return Some(format!("0x{}", hex_data));
+    }
+
+    let bytes = alloy::hex::decode(hex_data).ok()?;
+
+    if bytes.len() >= 4 && bytes[0..4] == [0x08, 0xc3, 0x79, 0xa0] {
+        if bytes.len() >= 68 {
+            let offset = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+            if bytes.len() >= 36 + offset {
+                let len_start = 4 + offset;
+                let len = u32::from_be_bytes([bytes[len_start + 28], bytes[len_start + 29], bytes[len_start + 30], bytes[len_start + 31]]) as usize;
+                let str_start = len_start + 32;
+                if bytes.len() >= str_start + len {
+                    return String::from_utf8(bytes[str_start..str_start + len].to_vec()).ok();
+                }
+            }
+        }
+    }
+
+    if bytes.len() >= 4 && bytes[0..4] == [0x4e, 0x48, 0x7b, 0x71] {
+        if bytes.len() >= 36 {
+            let code = U256::from_be_slice(&bytes[4..36]);
+            return Some(format!("Panic(0x{:02x})", code));
+        }
+    }
+
+    if bytes.len() >= 4 {
+        let selector: [u8; 4] = bytes[0..4].try_into().unwrap();
+        let known_errors: &[(&str, usize)] = &[
+            ("UnknownRoot(bytes32)", 32),
+            ("AlreadySpent()", 0),
+            ("ProofTooLong(uint256)", 32),
+            ("NotOutbox(address)", 32),
+        ];
+        for (sig, param_len) in known_errors {
+            let expected = &alloy::primitives::keccak256(sig)[..4];
+            if selector == expected {
+                if *param_len == 0 {
+                    return Some(sig.to_string());
+                } else if bytes.len() >= 4 + param_len {
+                    return Some(format!("{}(0x{})", sig.split('(').next().unwrap(), alloy::hex::encode(&bytes[4..4 + param_len])));
+                }
+            }
+        }
+    }
+
+    Some(format!("0x{}", hex_data))
+}
+
 pub async fn was_event_emitted(
     provider: &DynProvider<Ethereum>,
     address: Address,
@@ -72,7 +132,10 @@ pub async fn send_tx(
                     return Ok(());
                 }
             }
-            Err(e.into())
+            match decode_revert_reason(&err_msg) {
+                Some(reason) => Err(format!("[{}] {} reverted: {}", route_name, action, reason).into()),
+                None => Err(e.into()),
+            }
         }
     }
 }

@@ -45,10 +45,8 @@ pub async fn execute(
     ).await;
 
     if let Err(e) = &result {
-        if e.to_string().contains("reverted") {
-            println!("[{}][task::execute_relay] Tx reverted, dropping task", route.name);
-            return Ok(());
-        }
+        println!("[{}][task::execute_relay] {}, dropping task", route.name, e);
+        return Ok(());
     }
     result
 }
