@@ -24,6 +24,10 @@ contract OutboxMock is IOutbox {
         return spent[index];
     }
 
+    function roots(bytes32) external pure returns (bytes32) {
+        return bytes32(uint256(1));
+    }
+
     function executeTransaction(
         bytes32[] calldata,
         uint256 index,

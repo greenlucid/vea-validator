@@ -114,6 +114,9 @@ async fn test_verify_snapshot() {
     advance_time(min_challenge + 10).await;
     dispatcher.process_pending().await;
 
+    advance_time(5000).await;
+    dispatcher.process_pending().await;
+
     let sig = alloy::primitives::keccak256("Verified(uint256)");
     let filter = alloy::rpc::types::Filter::new().address(route.outbox_address).event_signature(sig).from_block(0u64);
     let logs = outbox_provider.get_logs(&filter).await.unwrap();
@@ -175,6 +178,9 @@ async fn test_full_happy_path_via_indexer() {
 
     let min_challenge = outbox.minChallengePeriod().call().await.unwrap().to::<u64>();
     advance_time(min_challenge + 10).await;
+    dispatcher.process_pending().await;
+
+    advance_time(5000).await;
     dispatcher.process_pending().await;
 
     let sig = alloy::primitives::keccak256("Verified(uint256)");

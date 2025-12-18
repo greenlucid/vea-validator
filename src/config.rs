@@ -31,7 +31,7 @@ impl RouteSettings {
             relay_delay_secs: 7 * 24 * 3600,
             start_verification_delay: 86400 + 3600,
             min_challenge_period: 600,
-            sync_lookback_secs: 12 * 3600,
+            sync_lookback_secs: 7 * 24 * 3600 + 24 * 3600,
         }
     }
 }
