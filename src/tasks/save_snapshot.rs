@@ -36,6 +36,7 @@ pub async fn execute(
 
     let msg_logs = msg_logs?;
     if msg_logs.is_empty() {
+        println!("[{}][task::save_snapshot] No messages in epoch {}, skipping", route.name, epoch);
         return Ok(());
     }
 
@@ -45,10 +46,12 @@ pub async fn execute(
             let saved_count = U256::from_be_slice(&last_snapshot.data().data[64..96]).to::<u64>();
             let current_count = inbox.count().call().await?;
             if saved_count == current_count {
+                println!("[{}][task::save_snapshot] Epoch {} already saved", route.name, epoch);
                 return Ok(());
             }
         }
     }
 
+    println!("[{}][task::save_snapshot] Saving snapshot for epoch {}", route.name, epoch);
     send_tx(inbox.saveSnapshot().send().await, "saveSnapshot", route.name).await
 }
