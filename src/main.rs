@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
-use futures_util::future::select_all;
+use std::panic::AssertUnwindSafe;
+use futures_util::future::{select_all, FutureExt};
+use tokio::time::{sleep, Duration};
 use vea_validator::{
     epoch_watcher::EpochWatcher,
     indexer::EventIndexer,
@@ -9,6 +11,31 @@ use vea_validator::{
     config::{ValidatorConfig, Route},
     startup::{check_rpc_health, check_balances, check_finality_config, load_route_settings},
 };
+
+const RETRY_DELAY_SECS: u64 = 5 * 60;
+
+async fn run_route_with_retry(config: ValidatorConfig, route: Route) {
+    loop {
+        let result = AssertUnwindSafe(run_route(config.clone(), route.clone()))
+            .catch_unwind()
+            .await;
+
+        match result {
+            Ok(()) => break,
+            Err(e) => {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                println!("[{}] Route crashed: {}. Retrying in {} seconds...", route.name, msg, RETRY_DELAY_SECS);
+                sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
+            }
+        }
+    }
+}
 
 async fn run_route(config: ValidatorConfig, route: Route) {
     let name = route.name.to_lowercase().replace("_", "-");
@@ -66,14 +93,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let handles: Vec<_> = routes.into_iter()
         .map(|route| {
             let config = c.clone();
-            tokio::spawn(run_route(config, route))
+            tokio::spawn(run_route_with_retry(config, route))
         })
         .collect();
 
     tokio::select! {
-        _ = select_all(handles) => {
-            panic!("A route handler died unexpectedly");
-        }
+        _ = select_all(handles) => {}
         _ = tokio::signal::ctrl_c() => {
             println!("\nShutting down...");
         }
