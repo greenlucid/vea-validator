@@ -5,17 +5,23 @@ use vea_validator::{
     indexer::EventIndexer,
     tasks::dispatcher::TaskDispatcher,
     tasks::{TaskStore, ClaimStore},
-    contracts::IVeaInboxArbToEth,
+    contracts::IVeaInbox,
     config::{ValidatorConfig, Route},
     startup::{check_rpc_health, check_balances, load_route_settings},
 };
 
-async fn run_route(config: ValidatorConfig, route: Route, epoch_period: u64) {
+async fn run_route(config: ValidatorConfig, route: Route) {
     let name = route.name.to_lowercase().replace("_", "-");
     let schedule_path = format!("data/schedules/{}.json", name);
     let claims_path = format!("data/claims/{}.json", name);
 
-    println!("[{}] Inbox: {:?}, Outbox: {:?}", route.name, route.inbox_address, route.outbox_address);
+    let inbox = IVeaInbox::new(route.inbox_address, route.inbox_provider.clone());
+    let epoch_period: u64 = inbox.epochPeriod().call().await
+        .expect("Failed to get epochPeriod")
+        .try_into()
+        .expect("epochPeriod overflow");
+
+    println!("[{}] Inbox: {:?}, Outbox: {:?}, epochPeriod: {}s", route.name, route.inbox_address, route.outbox_address, epoch_period);
 
     let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
     let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
@@ -54,15 +60,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         route.settings = load_route_settings(route, c.arb_outbox, &eth_provider).await;
     }
 
-    let inbox = IVeaInboxArbToEth::new(routes[0].inbox_address, routes[0].inbox_provider.clone());
-    let epoch_period: u64 = inbox.epochPeriod().call().await?.try_into()?;
-
     println!("Starting validator for {} routes...", routes.len());
 
     let handles: Vec<_> = routes.into_iter()
         .map(|route| {
             let config = c.clone();
-            tokio::spawn(run_route(config, route, epoch_period))
+            tokio::spawn(run_route(config, route))
         })
         .collect();
 
