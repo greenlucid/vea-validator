@@ -34,7 +34,7 @@ async fn test_save_snapshot() {
     let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
     let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     task_store.lock().unwrap().set_on_sync(true);
-    let watcher = EpochWatcher::new(route.clone(), true, claim_store, task_store);
+    let watcher = EpochWatcher::new(c.clone(), route.clone(), true, claim_store, task_store);
     let handle = tokio::spawn(async move { watcher.watch_epochs(epoch_period).await });
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -81,7 +81,7 @@ async fn test_claim() {
     let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
     let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     task_store.lock().unwrap().set_on_sync(true);
-    let watcher = EpochWatcher::new(route.clone(), true, claim_store, task_store);
+    let watcher = EpochWatcher::new(c.clone(), route.clone(), true, claim_store, task_store);
     let handle = tokio::spawn(async move { watcher.watch_epochs(epoch_period).await });
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -116,7 +116,7 @@ async fn test_no_duplicate_snapshot() {
     let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
     let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
     task_store.lock().unwrap().set_on_sync(true);
-    let watcher = EpochWatcher::new(route.clone(), true, claim_store, task_store);
+    let watcher = EpochWatcher::new(c.clone(), route.clone(), true, claim_store, task_store);
     let handle = tokio::spawn(async move { watcher.watch_epochs(epoch_period).await });
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -159,6 +159,6 @@ async fn test_claim_race_condition() {
     let test_dir = tempfile::tempdir().unwrap();
     let claim_store = Arc::new(Mutex::new(ClaimStore::new(test_dir.path().join("claims.json"))));
     let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let result = vea_validator::tasks::claim::execute(route, epoch, &claim_store, ts).await;
+    let result = vea_validator::tasks::claim::execute(&c, route, epoch, &claim_store, ts).await;
     assert!(result.is_ok(), "Validator should handle existing claim gracefully");
 }

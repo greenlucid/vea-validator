@@ -184,5 +184,20 @@ sol! {
     #[sol(rpc)]
     interface INodeInterface {
         function constructOutboxProof(uint64 size, uint64 leaf) external view returns (bytes32 send, bytes32 root, bytes32[] memory proof);
+        function findBatchContainingBlock(uint64 blockNum) external view returns (uint64 batch);
+    }
+
+    #[derive(Debug)]
+    #[sol(rpc)]
+    interface ISequencerInbox {
+        event SequencerBatchDelivered(
+            uint256 indexed batchSequenceNumber,
+            bytes32 indexed beforeAcc,
+            bytes32 indexed afterAcc,
+            bytes32 delayedAcc,
+            uint256 afterDelayedMessagesRead,
+            tuple(uint64,uint64,uint64,uint64) timeBounds,
+            uint8 dataLocation
+        );
     }
 }

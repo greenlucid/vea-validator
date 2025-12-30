@@ -2,7 +2,8 @@ use alloy::primitives::U256;
 use alloy::providers::Provider;
 use std::sync::{Arc, Mutex};
 use crate::config::{Route, ValidatorConfig};
-use crate::contracts::{IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
+use crate::contracts::{IVeaInbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
+use crate::finality::is_epoch_finalized;
 use crate::tasks::{send_tx, was_event_emitted, ClaimStore};
 
 pub async fn execute(
@@ -11,6 +12,21 @@ pub async fn execute(
     epoch: u64,
     claim_store: &Arc<Mutex<ClaimStore>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let inbox = IVeaInbox::new(route.inbox_address, route.inbox_provider.clone());
+    let epoch_period: u64 = inbox.epochPeriod().call().await?.try_into()?;
+
+    let finalized = is_epoch_finalized(
+        epoch,
+        epoch_period,
+        &route.inbox_provider,
+        &config.ethereum_provider,
+        config.sequencer_inbox,
+    ).await?;
+    if !finalized {
+        println!("[{}][task::challenge] Epoch {} not yet finalized on L1", route.name, epoch);
+        return Err("EpochNotFinalized".into());
+    }
+
     let claim = claim_store.lock().unwrap().get_claim(epoch);
     let wallet_address = config.wallet.default_signer().address();
 

@@ -7,7 +7,7 @@ use vea_validator::{
     tasks::{TaskStore, ClaimStore},
     contracts::IVeaInbox,
     config::{ValidatorConfig, Route},
-    startup::{check_rpc_health, check_balances, load_route_settings},
+    startup::{check_rpc_health, check_balances, check_finality_config, load_route_settings},
 };
 
 async fn run_route(config: ValidatorConfig, route: Route) {
@@ -27,7 +27,7 @@ async fn run_route(config: ValidatorConfig, route: Route) {
     let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
 
     let wallet_address = config.wallet.default_signer().address();
-    let watcher = EpochWatcher::new(route.clone(), config.make_claims, claim_store.clone(), task_store.clone());
+    let watcher = EpochWatcher::new(config.clone(), route.clone(), config.make_claims, claim_store.clone(), task_store.clone());
     let indexer = EventIndexer::new(route.clone(), wallet_address, task_store.clone(), claim_store.clone());
     let dispatcher = TaskDispatcher::new(config, route.clone(), task_store.clone(), claim_store.clone());
 
@@ -54,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut routes = c.build_routes();
     check_rpc_health(&routes).await?;
     check_balances(&c, &routes).await?;
+    check_finality_config(&c);
 
     let eth_provider = routes[0].outbox_provider.clone();
     for route in routes.iter_mut() {

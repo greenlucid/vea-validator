@@ -4,6 +4,13 @@ use alloy::network::Ethereum;
 use crate::contracts::{IVeaOutbox, IWETH, IOutbox, IRollup};
 use crate::config::{ValidatorConfig, Route, RouteSettings};
 
+pub fn check_finality_config(config: &ValidatorConfig) {
+    if config.sequencer_inbox.is_none() {
+        panic!("FATAL: SEQUENCER_INBOX must be set for L2 finality verification");
+    }
+    println!("✓ Finality config: sequencer_inbox={:?}", config.sequencer_inbox.unwrap());
+}
+
 const TIMING_SAFETY_BUFFER_SECS: u64 = 10 * 60;
 
 pub async fn check_rpc_health(routes: &[Route]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

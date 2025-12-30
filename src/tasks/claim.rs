@@ -1,18 +1,34 @@
 use alloy::primitives::{FixedBytes, U256};
 use std::sync::{Arc, Mutex};
-use crate::config::Route;
+use crate::config::{Route, ValidatorConfig};
 use crate::contracts::{IVeaInbox, IVeaOutbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
+use crate::finality::is_epoch_finalized;
 use crate::tasks::{send_tx, ClaimStore};
 
 const SEVEN_DAYS_SECS: u32 = 7 * 24 * 3600;
 
 pub async fn execute(
+    config: &ValidatorConfig,
     route: &Route,
     epoch: u64,
     claim_store: &Arc<Mutex<ClaimStore>>,
     current_timestamp: u64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let inbox = IVeaInbox::new(route.inbox_address, route.inbox_provider.clone());
+    let epoch_period: u64 = inbox.epochPeriod().call().await?.try_into()?;
+
+    let finalized = is_epoch_finalized(
+        epoch,
+        epoch_period,
+        &route.inbox_provider,
+        &config.ethereum_provider,
+        config.sequencer_inbox,
+    ).await?;
+    if !finalized {
+        println!("[{}][task::claim] Epoch {} not yet finalized on L1", route.name, epoch);
+        return Err("EpochNotFinalized".into());
+    }
+
     let outbox = IVeaOutbox::new(route.outbox_address, route.outbox_provider.clone());
 
     let state_root = inbox.snapshots(U256::from(epoch)).call().await?;

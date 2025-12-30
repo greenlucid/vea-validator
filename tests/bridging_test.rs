@@ -203,6 +203,10 @@ async fn test_execute_relay() {
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
+    advance_time(15 * 60 + 10).await;
+    indexer.scan_once().await;
+    dispatcher.process_pending().await;
+
     let balance_after_withdraw = outbox_provider.get_balance(wallet_address).await.unwrap();
     assert!(balance_after_withdraw > balance_after_challenge, "Deposit was not returned to claimer (honest) after disputed verification");
 

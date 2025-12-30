@@ -161,6 +161,35 @@ Two types of route-specific branching:
 |------|------------|---------------|
 | `send_snapshot` | `sendSnapshot(epoch, claim)` | `sendSnapshot(epoch, gas_limit, claim)` |
 
+## L2 Finality Verification
+
+Before executing critical tasks (`validate_claim`, `claim`, `challenge`), the validator verifies the epoch's L2 data is finalized on L1. This prevents acting on data that could theoretically be reorged.
+
+**How it works:**
+1. Convert epoch → end timestamp: `(epoch + 1) * epoch_period`
+2. Binary search to find the L2 block at that timestamp
+3. Query `NodeInterface.findBatchContainingBlock(l2_block)` on Arbitrum to get the batch number
+4. Search for `SequencerInbox.SequencerBatchDelivered(batchNum)` event on L1 to find which L1 block contains the batch
+5. Compare that L1 block against `eth_getBlockByNumber("finalized")` - if finalized block >= batch block, the epoch is finalized
+
+**Batch event query strategy:** Batches are posted to L1 every ~1-3 minutes after L2 transactions. To find the `SequencerBatchDelivered` event without querying from genesis (which would hit RPC block range limits), we:
+1. Binary search L1 to find the block at `epoch_end_ts + 5 minutes` (accounting for batch posting delay)
+2. Query a 2000-block range centered on that block (±1000 blocks = ~3.3 hours each direction)
+3. If the event isn't in that range, return "not finalized" - either the batch hasn't been posted yet, or something is very wrong
+
+**Configuration:**
+- `SEQUENCER_INBOX`: Address of Arbitrum's SequencerInbox on Ethereum L1. **Required in production** - `startup.rs` panics if not set.
+- For tests (local Anvil chains), `SEQUENCER_INBOX` is not set. When `sequencer_inbox` is `None`, finality checks return `Ok(true)` immediately, bypassing the check.
+
+**Why finality matters:**
+- The 15-minute buffer after epoch end is a heuristic, not a guarantee
+- Real finality depends on batch posting to L1 and L1 block finalization (~15-20 min on mainnet)
+- Without finality checks, a validator could challenge a valid claim if L2 data reorged after they read it
+
+**Task behavior when not finalized:**
+- Tasks return `Err("EpochNotFinalized")` and get rescheduled
+- This is expected during normal operation when tasks are scheduled close to epoch boundaries
+
 ## Known Issues
 
 ### Execute Relay

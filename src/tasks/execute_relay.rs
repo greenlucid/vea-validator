@@ -1,5 +1,5 @@
 use alloy::primitives::{Address, Bytes, FixedBytes, U256};
-use crate::config::Route;
+use crate::config::{Route, ValidatorConfig};
 use crate::contracts::{IArbSys, INodeInterface, IOutbox};
 use crate::tasks::send_tx;
 
@@ -7,8 +7,8 @@ const ARB_SYS: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 const NODE_INTERFACE: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xC8]);
 
 pub async fn execute(
+    config: &ValidatorConfig,
     route: &Route,
-    arb_outbox_address: Address,
     position: U256,
     l2_sender: Address,
     dest_addr: Address,
@@ -18,7 +18,7 @@ pub async fn execute(
     amount: U256,
     data: Bytes,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let outbox = IOutbox::new(arb_outbox_address, route.outbox_provider.clone());
+    let outbox = IOutbox::new(config.arb_outbox, config.ethereum_provider.clone());
 
     let is_spent = outbox.isSpent(position).call().await?;
     if is_spent {

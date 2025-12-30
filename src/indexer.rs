@@ -9,6 +9,7 @@ use tokio::time::{sleep, Duration};
 use crate::config::Route;
 use crate::contracts::{IVeaInbox, IArbSys};
 use crate::tasks::{Task, TaskKind, TaskStore, ClaimStore, ClaimData};
+use crate::find_block_by_timestamp;
 
 use alloy::network::Ethereum;
 use alloy::providers::DynProvider;
@@ -30,33 +31,6 @@ async fn get_log_timestamp(log: &alloy::rpc::types::Log, provider: &DynProvider<
         .expect("Failed to fetch block for timestamp")
         .expect("Block not found");
     block.header.timestamp
-}
-
-async fn find_block_by_timestamp(provider: &DynProvider<Ethereum>, target_ts: u64) -> u64 {
-    let latest = provider.get_block_number().await.expect("Failed to get latest block number");
-    let latest_block = provider.get_block_by_number(latest.into()).await
-        .expect("Failed to get latest block")
-        .expect("Latest block not found");
-
-    if target_ts >= latest_block.header.timestamp {
-        return latest;
-    }
-
-    let mut lo = 0u64;
-    let mut hi = latest;
-
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        let block = provider.get_block_by_number(mid.into()).await
-            .expect("Failed to get block during binary search")
-            .expect("Block not found during binary search");
-        if block.header.timestamp < target_ts {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    lo
 }
 
 pub struct EventIndexer {

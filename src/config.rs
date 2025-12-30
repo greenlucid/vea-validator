@@ -60,38 +60,42 @@ pub struct ValidatorConfig {
     pub inbox_arb_to_gnosis: Address,
     pub outbox_arb_to_gnosis: Address,
     pub arb_outbox: Address,
+    pub sequencer_inbox: Option<Address>,
+    pub ethereum_provider: DynProvider<Ethereum>,
     pub make_claims: bool,
 }
+fn build_provider_from_urls(urls: &[String], wallet: &EthereumWallet) -> DynProvider<Ethereum> {
+    if urls.len() == 1 {
+        return DynProvider::new(
+            ProviderBuilder::new()
+                .wallet(wallet.clone())
+                .connect_http(urls[0].parse().expect("Invalid RPC URL"))
+        );
+    }
+
+    let fallback = FallbackLayer::default()
+        .with_active_transport_count(NonZeroUsize::new(1).unwrap());
+
+    let transports: Vec<_> = urls.iter()
+        .map(|url| Http::new(url.parse().expect("Invalid RPC URL")))
+        .collect();
+
+    let transport = ServiceBuilder::new()
+        .layer(fallback)
+        .service(transports);
+
+    let client = RpcClient::builder().transport(transport, false);
+    DynProvider::new(
+        ProviderBuilder::new()
+            .wallet(wallet.clone())
+            .connect_client(client)
+    )
+}
+
 impl ValidatorConfig {
     fn build_provider(&self, chain_id: u64) -> DynProvider<Ethereum> {
         let chain = self.chains.get(&chain_id).expect("Chain not found");
-        let urls = &chain.rpc_urls;
-
-        if urls.len() == 1 {
-            return DynProvider::new(
-                ProviderBuilder::new()
-                    .wallet(self.wallet.clone())
-                    .connect_http(urls[0].parse().expect("Invalid RPC URL"))
-            );
-        }
-
-        let fallback = FallbackLayer::default()
-            .with_active_transport_count(NonZeroUsize::new(1).unwrap());
-
-        let transports: Vec<_> = urls.iter()
-            .map(|url| Http::new(url.parse().expect("Invalid RPC URL")))
-            .collect();
-
-        let transport = ServiceBuilder::new()
-            .layer(fallback)
-            .service(transports);
-
-        let client = RpcClient::builder().transport(transport, false);
-        DynProvider::new(
-            ProviderBuilder::new()
-                .wallet(self.wallet.clone())
-                .connect_client(client)
-        )
+        build_provider_from_urls(&chain.rpc_urls, &self.wallet)
     }
 
     pub fn build_routes(&self) -> Vec<Route> {
@@ -200,6 +204,16 @@ impl ValidatorConfig {
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .expect("MAKE_CLAIMS must be set");
 
+        let sequencer_inbox = std::env::var("SEQUENCER_INBOX")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(|s| Address::from_str(&s).expect("Invalid SEQUENCER_INBOX address"));
+
+        let ethereum_provider = build_provider_from_urls(
+            &chains.get(&1).expect("Ethereum chain not configured").rpc_urls,
+            &wallet,
+        );
+
         Ok(Self {
             private_key,
             wallet,
@@ -209,6 +223,8 @@ impl ValidatorConfig {
             inbox_arb_to_gnosis,
             outbox_arb_to_gnosis,
             arb_outbox,
+            sequencer_inbox,
+            ethereum_provider,
             make_claims,
         })
     }

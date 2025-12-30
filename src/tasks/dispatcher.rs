@@ -79,10 +79,11 @@ impl TaskDispatcher {
                 tasks::save_snapshot::execute(&self.route, &self.task_store).await.is_ok()
             }
             TaskKind::Claim { .. } => {
-                tasks::claim::execute(&self.route, epoch, &self.claim_store, current_timestamp).await.is_ok()
+                tasks::claim::execute(&self.config, &self.route, epoch, &self.claim_store, current_timestamp).await.is_ok()
             }
             TaskKind::ValidateClaim => {
                 tasks::validate_claim::execute(
+                    &self.config,
                     &self.route,
                     epoch,
                     &self.claim_store,
@@ -133,8 +134,8 @@ impl TaskDispatcher {
             }
             TaskKind::ExecuteRelay { position, l2_sender, dest_addr, l2_block, l1_block, l2_timestamp, amount, data } => {
                 match tasks::execute_relay::execute(
+                    &self.config,
                     &self.route,
-                    self.config.arb_outbox,
                     *position,
                     *l2_sender,
                     *dest_addr,
