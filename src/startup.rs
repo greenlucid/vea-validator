@@ -121,7 +121,8 @@ pub async fn load_route_settings(
         .expect("Failed to get rollup address from Arbitrum outbox");
     let rollup = IRollup::new(rollup_address, arb_outbox_provider.clone());
     let confirm_period_blocks: u64 = rollup.confirmPeriodBlocks().call().await
-        .expect("Failed to get confirmPeriodBlocks");
+        .expect("Failed to get confirmPeriodBlocks")
+        .min(14458);
     println!("[{}] Rollup confirmPeriodBlocks: {}", route.name, confirm_period_blocks);
 
     let outbox = IVeaOutbox::new(route.outbox_address, route.outbox_provider.clone());
