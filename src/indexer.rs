@@ -192,7 +192,10 @@ impl EventIndexer {
         let to_block = min(from_block + CHUNK_SIZE, target_block);
 
         let event_sigs: Vec<FixedBytes<32>> = match target {
-            Inbox => vec![alloy::primitives::keccak256("SnapshotSent(uint256,bytes32)")],
+            Inbox => vec![
+                alloy::primitives::keccak256("SnapshotSent(uint256,bytes32)"),
+                alloy::primitives::keccak256("SnapshotSaved(bytes32,uint256,uint64)"),
+            ],
             Outbox => vec![
                 alloy::primitives::keccak256("Claimed(address,uint256,bytes32)"),
                 alloy::primitives::keccak256("VerificationStarted(uint256)"),
@@ -210,12 +213,8 @@ impl EventIndexer {
         match provider.get_logs(&filter).await {
             Ok(logs) => {
                 for log in logs {
-                    let block_ts = get_log_timestamp(&log, provider).await;
-                    if block_ts > now.saturating_sub(FINALITY_BUFFER_SECS) {
-                        continue;
-                    }
                     match target {
-                        Inbox => self.handle_snapshot_sent(&log).await,
+                        Inbox => self.dispatch_inbox_event(&log).await,
                         Outbox => self.dispatch_outbox_event(&log).await,
                     }
                 }
@@ -252,6 +251,19 @@ impl EventIndexer {
         }
     }
 
+    async fn dispatch_inbox_event(&self, log: &alloy::rpc::types::Log) {
+        let topic0 = match log.topics().first() {
+            Some(t) => *t,
+            None => return,
+        };
+
+        if topic0 == alloy::primitives::keccak256("SnapshotSent(uint256,bytes32)") {
+            self.handle_snapshot_sent(log).await;
+        } else if topic0 == alloy::primitives::keccak256("SnapshotSaved(bytes32,uint256,uint64)") {
+            self.handle_snapshot_saved(log);
+        }
+    }
+
     async fn dispatch_outbox_event(&self, log: &alloy::rpc::types::Log) {
         let topic0 = match log.topics().first() {
             Some(t) => *t,
@@ -267,6 +279,15 @@ impl EventIndexer {
         } else if topic0 == alloy::primitives::keccak256("Verified(uint256)") {
             self.handle_verified_event(log).await;
         }
+    }
+
+    fn handle_snapshot_saved(&self, log: &alloy::rpc::types::Log) {
+        if log.data().data.len() < 96 {
+            return;
+        }
+        let count = U256::from_be_slice(&log.data().data[64..96]).to::<u64>();
+        self.task_store.lock().unwrap().set_last_saved_count(count);
+        println!("[{}][Indexer] SnapshotSaved: count={}", self.route.name, count);
     }
 
     async fn handle_snapshot_sent(&self, log: &alloy::rpc::types::Log) {

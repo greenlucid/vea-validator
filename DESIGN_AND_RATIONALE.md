@@ -22,8 +22,17 @@ main.rs
 
 ### EpochWatcher
 Polls every 10s. Two responsibilities:
-1. **Save snapshot** ~60s before epoch ends (if messages exist)
+1. **Save snapshot** ~60s before epoch ends (if messages exist and count changed)
 2. **Make claim** ~15min after epoch starts (if `MAKE_CLAIMS=true` and synced)
+
+**Snapshot saving logic:** The indexer tracks `last_saved_count` from `SnapshotSaved` events. Before saving, we compare `inbox.count()` to `last_saved_count`:
+- If `count == 0`: no messages, skip
+- If `count <= last_saved_count`: nothing new, skip
+- If `last_saved_count` is unknown (None): treat as 0, save if messages exist
+
+**Cold-start behavior:** If no `SnapshotSaved` events exist in the sync window (fresh chain or long hiatus), `last_saved_count` defaults to 0. This ensures the validator will save a snapshot if any messages exist, preventing bridge staleness when this is the only validator running.
+
+**15min buffer edge case:** Since `SnapshotSaved` events are processed with the same 15min finality buffer as other events, if another validator saves a snapshot within the last 15min of an epoch, this validator won't see it yet and may call `saveSnapshot()` redundantly. This is acceptable, since L2 gas is cheap.
 
 **Why claims are optional:** To challenge fraud, the validator needs ETH/WETH for deposits. Making claims locks funds on the outbox. During an attack, a conservative validator should preserve capital for challenges rather than tie it up in claims.
 
@@ -38,6 +47,7 @@ Reacts to events:
 - `outbox.Challenged` → schedules `task::send_snapshot`
 - `outbox.Verified` → schedules `task::withdraw_deposit`
 - `inbox.SnapshotSent` → schedules `task::execute_relay` (after `relay_delay`), **only if emitted by this validator**
+- `inbox.SnapshotSaved` → updates `last_saved_count` (used by save_snapshot logic)
 
 ### TaskDispatcher
 Polls every 15s. Executes tasks when `execute_after` timestamp reached.

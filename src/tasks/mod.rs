@@ -193,6 +193,7 @@ pub struct RouteState {
     pub indexing_since: Option<u64>,
     #[serde(default)]
     pub on_sync: bool,
+    pub last_saved_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -401,6 +402,16 @@ impl TaskStore {
             println!("[{}][TaskStore] Invalidated {} tasks for epoch {}", self.label(), removed, epoch);
         }
         self.save(&state);
+    }
+
+    pub fn set_last_saved_count(&self, count: u64) {
+        let mut state = self.load();
+        state.last_saved_count = Some(count);
+        self.save(&state);
+    }
+
+    pub fn get_last_saved_count(&self) -> Option<u64> {
+        self.load().last_saved_count
     }
 }
 

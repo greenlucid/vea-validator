@@ -76,7 +76,7 @@ impl TaskDispatcher {
         let epoch = task.epoch;
         match &task.kind {
             TaskKind::SaveSnapshot => {
-                tasks::save_snapshot::execute(&self.route, epoch).await.is_ok()
+                tasks::save_snapshot::execute(&self.route, &self.task_store).await.is_ok()
             }
             TaskKind::Claim { .. } => {
                 tasks::claim::execute(&self.route, epoch, &self.claim_store, current_timestamp).await.is_ok()

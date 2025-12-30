@@ -41,7 +41,7 @@ impl EpochWatcher {
             let time_until_next_epoch = next_epoch_start.saturating_sub(now);
 
             if time_until_next_epoch <= BEFORE_EPOCH_BUFFER && last_before_epoch != Some(current_epoch) {
-                tasks::save_snapshot::execute(&self.route, current_epoch).await
+                tasks::save_snapshot::execute(&self.route, &self.task_store).await
                     .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to save snapshot for epoch {}: {}", self.route.name, current_epoch, e));
                 last_before_epoch = Some(current_epoch);
             }

@@ -89,7 +89,9 @@ async fn test_send_snapshot_on_challenged_event() {
     if target > ts { advance_time(target - ts).await; }
 
     let deposit = outbox.deposit().call().await.unwrap();
-    outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
+    let claim_receipt = outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
+    let timestamp_claimed = outbox_provider.get_block_by_number(claim_receipt.block_number.unwrap().into())
+        .await.unwrap().unwrap().header.timestamp as u32;
 
     advance_time(15 * 60 + 10).await;
 
@@ -109,7 +111,7 @@ async fn test_send_snapshot_on_challenged_event() {
     let claim = vea_validator::contracts::Claim {
         stateRoot: state_root,
         claimer: c.wallet.default_signer().address(),
-        timestampClaimed: outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp as u32 - 15 * 60 - 10,
+        timestampClaimed: timestamp_claimed,
         timestampVerification: 0,
         blocknumberVerification: 0,
         honest: vea_validator::contracts::Party::None,
