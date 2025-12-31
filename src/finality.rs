@@ -58,9 +58,10 @@ async fn get_l1_block_for_batch(
 ) -> Result<Option<u64>, Box<dyn std::error::Error + Send + Sync>> {
     let event_sig = alloy::primitives::keccak256("SequencerBatchDelivered(uint256,bytes32,bytes32,bytes32,uint256,(uint64,uint64,uint64,uint64),uint8)");
 
+    let latest = l1_provider.get_block_number().await?;
     let midpoint = find_block_by_timestamp(l1_provider, epoch_end_ts + BATCH_POSTING_DELAY_SECS).await;
     let from_block = midpoint.saturating_sub(SEARCH_RANGE_BLOCKS);
-    let to_block = midpoint + SEARCH_RANGE_BLOCKS;
+    let to_block = (midpoint + SEARCH_RANGE_BLOCKS).min(latest);
 
     let filter = Filter::new()
         .address(sequencer_inbox)

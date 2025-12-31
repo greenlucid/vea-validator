@@ -16,13 +16,19 @@ pub async fn execute(
     let inbox = IVeaInbox::new(route.inbox_address, route.inbox_provider.clone());
     let epoch_period: u64 = inbox.epochPeriod().call().await?.try_into()?;
 
-    let finalized = is_epoch_finalized(
+    let finalized = match is_epoch_finalized(
         epoch,
         epoch_period,
         &route.inbox_provider,
         &config.ethereum_provider,
         config.sequencer_inbox,
-    ).await?;
+    ).await {
+        Ok(f) => f,
+        Err(e) => {
+            println!("[{}][task::validate_claim] Finality check failed for epoch {}: {}", route.name, epoch, e);
+            return Err(e);
+        }
+    };
     if !finalized {
         println!("[{}][task::validate_claim] Epoch {} not yet finalized on L1", route.name, epoch);
         return Err("EpochNotFinalized".into());
