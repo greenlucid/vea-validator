@@ -9,6 +9,7 @@ use crate::find_block_by_timestamp;
 
 const NODE_INTERFACE: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xC8]);
 const SEARCH_RANGE_BLOCKS: u64 = 2000;
+const MAX_SEARCH_ITERATIONS: u64 = 10;
 
 pub async fn is_epoch_finalized(
     epoch: u64,
@@ -60,8 +61,9 @@ async fn get_l1_block_for_batch(
     let latest = l1_provider.get_block_number().await?;
     let start_block = find_block_by_timestamp(l1_provider, epoch_end_ts).await;
     let mut from_block = start_block;
+    let mut iterations = 0;
 
-    while from_block < latest {
+    while from_block < latest && iterations < MAX_SEARCH_ITERATIONS {
         let to_block = (from_block + SEARCH_RANGE_BLOCKS).min(latest);
 
         let filter = Filter::new()
@@ -78,6 +80,7 @@ async fn get_l1_block_for_batch(
         }
 
         from_block = to_block + 1;
+        iterations += 1;
     }
 
     Ok(None)
