@@ -172,10 +172,12 @@ Before executing critical tasks (`validate_claim`, `claim`, `challenge`), the va
 4. Search for `SequencerInbox.SequencerBatchDelivered(batchNum)` event on L1 to find which L1 block contains the batch
 5. Compare that L1 block against `eth_getBlockByNumber("finalized")` - if finalized block >= batch block, the epoch is finalized
 
-**Batch event query strategy:** Batches are posted to L1 every ~1-3 minutes after L2 transactions. To find the `SequencerBatchDelivered` event without querying from genesis (which would hit RPC block range limits), we:
-1. Binary search L1 to find the block at `epoch_end_ts + 5 minutes` (accounting for batch posting delay)
-2. Query a 2000-block range centered on that block (±1000 blocks = ~3.3 hours each direction)
-3. If the event isn't in that range, return "not finalized" - either the batch hasn't been posted yet, or something is very wrong
+**Batch event query strategy:** Batches are posted to L1 after L2 transactions, but timing varies significantly - mainnet posts every ~1-3 minutes, while testnet can have gaps of hours or days. To find the `SequencerBatchDelivered` event reliably:
+1. Binary search L1 to find the block at `epoch_end_ts` (batch must be posted after the L2 block exists)
+2. Paginate forward in 2000-block chunks (~6.6 hours each) until we find the event or reach L1's latest block
+3. If not found after scanning to latest, return "not finalized" and reschedule the task for +30 minutes
+
+This approach handles arbitrary batch posting delays without hitting RPC block range limits. If the paginated search becomes too slow in production, we'll switch to indexing `SequencerBatchDelivered` events.
 
 **Configuration:**
 - `SEQUENCER_INBOX`: Address of Arbitrum's SequencerInbox on Ethereum L1. **Required in production** - `startup.rs` panics if not set.
@@ -187,8 +189,8 @@ Before executing critical tasks (`validate_claim`, `claim`, `challenge`), the va
 - Without finality checks, a validator could challenge a valid claim if L2 data reorged after they read it
 
 **Task behavior when not finalized:**
-- Tasks return `Err("EpochNotFinalized")` and get rescheduled
-- This is expected during normal operation when tasks are scheduled close to epoch boundaries
+- `ValidateClaim` returns `Err("EpochNotFinalized")` and gets rescheduled +30 minutes
+- This is expected during normal operation when tasks are scheduled close to epoch boundaries, or on testnet where batch posting is sporadic
 
 ## Known Issues
 

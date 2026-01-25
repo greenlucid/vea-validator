@@ -8,8 +8,7 @@ use crate::contracts::INodeInterface;
 use crate::find_block_by_timestamp;
 
 const NODE_INTERFACE: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xC8]);
-const BATCH_POSTING_DELAY_SECS: u64 = 5 * 60;
-const SEARCH_RANGE_BLOCKS: u64 = 1000;
+const SEARCH_RANGE_BLOCKS: u64 = 2000;
 
 pub async fn is_epoch_finalized(
     epoch: u64,
@@ -59,22 +58,27 @@ async fn get_l1_block_for_batch(
     let event_sig = alloy::primitives::keccak256("SequencerBatchDelivered(uint256,bytes32,bytes32,bytes32,uint256,(uint64,uint64,uint64,uint64),uint8)");
 
     let latest = l1_provider.get_block_number().await?;
-    let midpoint = find_block_by_timestamp(l1_provider, epoch_end_ts + BATCH_POSTING_DELAY_SECS).await;
-    let from_block = midpoint.saturating_sub(SEARCH_RANGE_BLOCKS);
-    let to_block = (midpoint + SEARCH_RANGE_BLOCKS).min(latest);
+    let start_block = find_block_by_timestamp(l1_provider, epoch_end_ts).await;
+    let mut from_block = start_block;
 
-    let filter = Filter::new()
-        .address(sequencer_inbox)
-        .event_signature(event_sig)
-        .topic1(U256::from(batch))
-        .from_block(from_block)
-        .to_block(to_block);
+    while from_block < latest {
+        let to_block = (from_block + SEARCH_RANGE_BLOCKS).min(latest);
 
-    let logs = l1_provider.get_logs(&filter).await?;
+        let filter = Filter::new()
+            .address(sequencer_inbox)
+            .event_signature(event_sig)
+            .topic1(U256::from(batch))
+            .from_block(from_block)
+            .to_block(to_block);
 
-    if logs.is_empty() {
-        return Ok(None);
+        let logs = l1_provider.get_logs(&filter).await?;
+
+        if !logs.is_empty() {
+            return Ok(logs[0].block_number);
+        }
+
+        from_block = to_block + 1;
     }
 
-    Ok(logs[0].block_number)
+    Ok(None)
 }

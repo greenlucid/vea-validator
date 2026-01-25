@@ -82,14 +82,21 @@ impl TaskDispatcher {
                 tasks::claim::execute(&self.config, &self.route, epoch, &self.claim_store, current_timestamp).await.is_ok()
             }
             TaskKind::ValidateClaim => {
-                tasks::validate_claim::execute(
+                match tasks::validate_claim::execute(
                     &self.config,
                     &self.route,
                     epoch,
                     &self.claim_store,
                     current_timestamp,
                     &self.task_store,
-                ).await.is_ok()
+                ).await {
+                    Ok(_) => true,
+                    Err(e) if e.to_string() == "EpochNotFinalized" => {
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 30 * 60);
+                        true
+                    }
+                    Err(_) => false,
+                }
             }
             TaskKind::Challenge => {
                 match tasks::challenge::execute(&self.config, &self.route, epoch, &self.claim_store).await {
