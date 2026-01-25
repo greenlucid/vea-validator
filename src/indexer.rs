@@ -143,13 +143,9 @@ impl EventIndexer {
         };
 
         let (catchup_start, catchup_target, last_logged_pct) = catchup;
-        let mut target_block = catchup_target.load(Ordering::Relaxed);
 
-        if target_block == 0 || from_block >= target_block {
-            let target_ts = now.saturating_sub(FINALITY_BUFFER_SECS);
-            target_block = find_block_by_timestamp(provider, target_ts).await;
-            catchup_target.store(target_block, Ordering::Relaxed);
-        }
+        let target_ts = now.saturating_sub(FINALITY_BUFFER_SECS);
+        let target_block = find_block_by_timestamp(provider, target_ts).await;
 
         if from_block >= target_block {
             catchup_start.store(0, Ordering::Relaxed);
@@ -158,7 +154,8 @@ impl EventIndexer {
             return true;
         }
 
-        if catchup_start.load(Ordering::Relaxed) == 0 {
+        if catchup_start.load(Ordering::Relaxed) == 0 || catchup_target.load(Ordering::Relaxed) != target_block {
+            catchup_target.store(target_block, Ordering::Relaxed);
             catchup_start.store(from_block, Ordering::Relaxed);
             last_logged_pct.store(0, Ordering::Relaxed);
         }
