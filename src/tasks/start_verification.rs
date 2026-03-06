@@ -1,5 +1,6 @@
 use alloy::primitives::{Address, U256};
 use std::sync::{Arc, Mutex};
+use tracing::info;
 use crate::config::Route;
 use crate::contracts::IVeaOutbox;
 use crate::tasks::{send_tx, was_event_emitted, ClaimStore};
@@ -11,7 +12,7 @@ pub async fn execute(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let claim_data = claim_store.lock().unwrap().get(epoch);
     if claim_data.challenger != Address::ZERO {
-        println!("[{}][task::start_verification] Epoch {} already challenged, dropping task", route.name, epoch);
+        info!(logger = "StartVerification", route = route.name, epoch, "Already challenged, dropping task");
         return Ok(());
     }
 
@@ -25,11 +26,11 @@ pub async fn execute(
 
     if let Err(e) = result {
         if was_event_emitted(&route.outbox_provider, route.outbox_address, "VerificationStarted(uint256)", epoch).await {
-            println!("[{}][task::start_verification] Epoch {} already started by another validator", route.name, epoch);
+            info!(logger = "StartVerification", route = route.name, epoch, "Already started by another validator");
             return Ok(());
         }
         if was_event_emitted(&route.outbox_provider, route.outbox_address, "Challenged(uint256,address)", epoch).await {
-            println!("[{}][task::start_verification] Epoch {} was challenged, dropping task", route.name, epoch);
+            info!(logger = "StartVerification", route = route.name, epoch, "Was challenged, dropping task");
             return Ok(());
         }
         return Err(e);

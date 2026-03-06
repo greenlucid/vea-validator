@@ -1,4 +1,5 @@
 use alloy::primitives::{Address, Bytes, FixedBytes, U256};
+use tracing::{info, warn};
 use crate::config::{Route, ValidatorConfig};
 use crate::contracts::{IArbSys, INodeInterface, IOutbox};
 use crate::tasks::send_tx;
@@ -22,7 +23,7 @@ pub async fn execute(
 
     let is_spent = outbox.isSpent(position).call().await?;
     if is_spent {
-        println!("[{}][task::execute_relay] position {} already spent", route.name, position);
+        info!(logger = "ExecuteRelay", route = route.name, position = %position, "Position already spent");
         return Ok(());
     }
 
@@ -30,7 +31,7 @@ pub async fn execute(
 
     let root_exists = outbox.roots(root).call().await?;
     if root_exists.is_zero() {
-        println!("[{}][task::execute_relay] root {:#x} not yet confirmed in Outbox, rescheduling", route.name, root);
+        warn!(logger = "ExecuteRelay", route = route.name, root = %format!("{:#x}", root), "Root not yet confirmed in Outbox, rescheduling");
         return Err("RootNotConfirmed".into());
     }
 
@@ -51,7 +52,7 @@ pub async fn execute(
     ).await;
 
     if let Err(e) = &result {
-        println!("[{}][task::execute_relay] {}, dropping task", route.name, e);
+        warn!(logger = "ExecuteRelay", route = route.name, "Execution failed: {e}, dropping task");
         return Ok(());
     }
     result

@@ -1,5 +1,6 @@
 use alloy::primitives::{FixedBytes, U256};
 use std::sync::{Arc, Mutex};
+use tracing::info;
 use crate::config::Route;
 use crate::contracts::{IVeaOutbox, Party};
 use crate::tasks::{send_tx, ClaimStore};
@@ -13,13 +14,13 @@ pub async fn execute(
 
     let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
     if claim_hash == FixedBytes::<32>::ZERO {
-        println!("[{}][task::withdraw_deposit] Epoch {} already withdrawn", route.name, epoch);
+        info!(logger = "WithdrawDeposit", route = route.name, epoch, "Already withdrawn");
         claim_store.lock().unwrap().remove(epoch);
         return Ok(());
     }
 
     let claim = claim_store.lock().unwrap().get_claim(epoch);
-    println!("[{}][task::withdraw_deposit] Epoch {} - {:?} was honest, withdrawing deposit", route.name, epoch, claim.honest);
+    info!(logger = "WithdrawDeposit", route = route.name, epoch, honest = ?claim.honest, "Withdrawing deposit");
 
     let result = match claim.honest {
         Party::Claimer => {
@@ -42,7 +43,7 @@ pub async fn execute(
     if let Err(e) = result {
         let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
         if claim_hash == FixedBytes::<32>::ZERO {
-            println!("[{}][task::withdraw_deposit] Epoch {} already withdrawn by another validator", route.name, epoch);
+            info!(logger = "WithdrawDeposit", route = route.name, epoch, "Already withdrawn by another validator");
             claim_store.lock().unwrap().remove(epoch);
             return Ok(());
         }

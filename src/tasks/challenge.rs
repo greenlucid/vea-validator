@@ -1,6 +1,7 @@
 use alloy::primitives::U256;
 use alloy::providers::Provider;
 use std::sync::{Arc, Mutex};
+use tracing::{info, warn};
 use crate::config::{Route, ValidatorConfig};
 use crate::contracts::{IVeaInbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis, IWETH};
 use crate::finality::is_epoch_finalized;
@@ -23,7 +24,7 @@ pub async fn execute(
         config.sequencer_inbox,
     ).await?;
     if !finalized {
-        println!("[{}][task::challenge] Epoch {} not yet finalized on L1", route.name, epoch);
+        warn!(logger = "Challenge", route = route.name, epoch, "Epoch not yet finalized on L1");
         return Err("EpochNotFinalized".into());
     }
 
@@ -37,7 +38,7 @@ pub async fn execute(
         let weth = IWETH::new(weth_address, route.outbox_provider.clone());
         let balance = weth.balanceOf(wallet_address).call().await?;
         if balance < deposit {
-            println!("[{}][task::challenge] Insufficient WETH (have {}, need {}), will retry", route.name, balance, deposit);
+            warn!(logger = "Challenge", route = route.name, epoch, have = %balance, need = %deposit, "Insufficient WETH, will retry");
             return Err("Insufficient funds".into());
         }
 
@@ -52,7 +53,7 @@ pub async fn execute(
 
         let balance = route.outbox_provider.get_balance(wallet_address).await?;
         if balance < deposit {
-            println!("[{}][task::challenge] Insufficient ETH (have {}, need {}), will retry", route.name, balance, deposit);
+            warn!(logger = "Challenge", route = route.name, epoch, have = %balance, need = %deposit, "Insufficient ETH, will retry");
             return Err("Insufficient funds".into());
         }
 
@@ -65,11 +66,11 @@ pub async fn execute(
 
     if let Err(e) = result {
         if was_event_emitted(&route.outbox_provider, route.outbox_address, "Challenged(uint256,address)", epoch).await {
-            println!("[{}][task::challenge] Epoch {} already challenged by another validator", route.name, epoch);
+            info!(logger = "Challenge", route = route.name, epoch, "Already challenged by another validator");
             return Ok(());
         }
         if was_event_emitted(&route.outbox_provider, route.outbox_address, "VerificationStarted(uint256)", epoch).await {
-            println!("[{}][task::challenge] Epoch {} verification started, claimHash changed - will retry", route.name, epoch);
+            warn!(logger = "Challenge", route = route.name, epoch, "Verification started, claimHash changed - will retry");
             return Err("VerificationStarted".into());
         }
         return Err(e);

@@ -1,5 +1,6 @@
 use alloy::primitives::{FixedBytes, U256};
 use std::sync::{Arc, Mutex};
+use tracing::{info, warn};
 use crate::config::{Route, ValidatorConfig};
 use crate::contracts::{IVeaInbox, IVeaOutbox, IVeaOutboxArbToEth, IVeaOutboxArbToGnosis};
 use crate::finality::is_epoch_finalized;
@@ -25,7 +26,7 @@ pub async fn execute(
         config.sequencer_inbox,
     ).await?;
     if !finalized {
-        println!("[{}][task::claim] Epoch {} not yet finalized on L1", route.name, epoch);
+        warn!(logger = "Claim", route = route.name, epoch, "Epoch not yet finalized on L1");
         return Err("EpochNotFinalized".into());
     }
 
@@ -33,25 +34,25 @@ pub async fn execute(
 
     let state_root = inbox.snapshots(U256::from(epoch)).call().await?;
     if state_root == FixedBytes::<32>::ZERO {
-        println!("[{}][task::claim] Epoch {} has no snapshot", route.name, epoch);
+        info!(logger = "Claim", route = route.name, epoch, "No snapshot");
         return Ok(());
     }
 
     let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
     if claim_hash != FixedBytes::<32>::ZERO {
-        println!("[{}][task::claim] Epoch {} already claimed", route.name, epoch);
+        info!(logger = "Claim", route = route.name, epoch, "Already claimed");
         return Ok(());
     }
 
     let current_state_root = outbox.stateRoot().call().await?;
     if current_state_root == state_root {
-        println!("[{}][task::claim] Epoch {} state root already verified on outbox", route.name, epoch);
+        info!(logger = "Claim", route = route.name, epoch, "State root already verified on outbox");
         return Ok(());
     }
 
     let since = (current_timestamp as u32).saturating_sub(SEVEN_DAYS_SECS);
     if claim_store.lock().unwrap().has_state_root_in_recent_claims(state_root, since) {
-        println!("[{}][task::claim] Epoch {} state root already in pending claim", route.name, epoch);
+        info!(logger = "Claim", route = route.name, epoch, "State root already in pending claim");
         return Ok(());
     }
 
@@ -75,7 +76,7 @@ pub async fn execute(
     if let Err(e) = result {
         let claim_hash = outbox.claimHashes(U256::from(epoch)).call().await?;
         if claim_hash != FixedBytes::<32>::ZERO {
-            println!("[{}][task::claim] Epoch {} already claimed by another validator", route.name, epoch);
+            info!(logger = "Claim", route = route.name, epoch, "Already claimed by another validator");
             return Ok(());
         }
         return Err(e);

@@ -5,6 +5,7 @@ use std::cmp::min;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::time::{sleep, Duration};
+use tracing::{info, warn, error};
 
 use crate::config::Route;
 use crate::contracts::{IVeaInbox, IArbSys};
@@ -89,8 +90,7 @@ impl EventIndexer {
             let inbox_start = find_block_by_timestamp(&self.route.inbox_provider, indexing_since).await;
             let outbox_start = find_block_by_timestamp(&self.route.outbox_provider, indexing_since).await;
             self.task_store.lock().unwrap().initialize_sync(indexing_since, inbox_start, outbox_start);
-            println!("[{}][Indexer] Initialized sync: indexing_since={}, inbox_start={}, outbox_start={}",
-                self.route.name, indexing_since, inbox_start, outbox_start);
+            info!(logger = "Indexer", route = self.route.name, indexing_since, inbox_start, outbox_start, "Initialized sync");
         }
     }
 
@@ -99,7 +99,7 @@ impl EventIndexer {
             let done = self.scan_once().await;
             if done {
                 if !self.task_store.lock().unwrap().is_on_sync() {
-                    println!("[{}][Indexer] Sync complete", self.route.name);
+                    info!(logger = "Indexer", route = self.route.name, "Sync complete");
                     self.task_store.lock().unwrap().set_on_sync(true);
                 }
                 sleep(IDLE_SLEEP).await;
@@ -126,7 +126,7 @@ impl EventIndexer {
         let current_block = match provider.get_block_number().await {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("[{}][Indexer] Failed to get {} block number: {}", self.route.name, label, e);
+                error!(logger = "Indexer", route = self.route.name, chain = label, "Failed to get block number: {e}");
                 return false;
             }
         };
@@ -204,7 +204,7 @@ impl EventIndexer {
                     let pct = if total > 0 { (done * 100) / total } else { 100 };
                     let last_pct = last_logged_pct.load(Ordering::Relaxed);
                     if pct / 10 > last_pct / 10 {
-                        println!("[{}][Indexer] {} sync {}%", self.route.name, label, pct);
+                        info!(logger = "Indexer", route = self.route.name, chain = label, progress = pct, "Syncing");
                         last_logged_pct.store(pct, Ordering::Relaxed);
                     }
                 }
@@ -216,7 +216,7 @@ impl EventIndexer {
                 is_done
             }
             Err(e) => {
-                eprintln!("[{}][Indexer] Failed to query {} logs {}-{}: {}", self.route.name, label, from_block, to_block, e);
+                error!(logger = "Indexer", route = self.route.name, chain = label, from_block, to_block, "Failed to query logs: {e}");
                 false
             }
         }
@@ -258,7 +258,7 @@ impl EventIndexer {
         }
         let count = U256::from_be_slice(&log.data().data[64..96]).to::<u64>();
         self.task_store.lock().unwrap().set_last_saved_count(count);
-        println!("[{}][Indexer] SnapshotSaved: count={}", self.route.name, count);
+        info!(logger = "Indexer", route = self.route.name, count, "SnapshotSaved");
     }
 
     async fn handle_snapshot_sent(&self, log: &alloy::rpc::types::Log) {
@@ -281,16 +281,13 @@ impl EventIndexer {
             .expect("Failed to get transaction")
             .expect("Transaction not found");
         if tx.inner.signer() != self.wallet_address {
-            println!("[{}][Indexer] SnapshotSent for epoch {} not from validator, skipping", self.route.name, epoch);
+            info!(logger = "Indexer", route = self.route.name, epoch, "SnapshotSent not from validator, skipping");
             return;
         }
 
         match self.fetch_l2_to_l1_from_tx(tx_hash, epoch).await {
             Some(task) => {
-                println!(
-                    "[{}][Indexer] Found SnapshotSent: epoch={}, position={:#x}",
-                    self.route.name, epoch, task.2
-                );
+                info!(logger = "Indexer", route = self.route.name, epoch, position = %format!("{:#x}", task.2), "Found SnapshotSent");
                 self.task_store.lock().unwrap().add_task(Task {
                     epoch: task.0,
                     execute_after: task.1,
@@ -307,7 +304,7 @@ impl EventIndexer {
                 });
             }
             None => {
-                eprintln!("[{}][Indexer] No L2ToL1Tx found in tx {:?}", self.route.name, tx_hash);
+                error!(logger = "Indexer", route = self.route.name, tx = ?tx_hash, "No L2ToL1Tx found in tx");
             }
         }
     }
@@ -319,7 +316,7 @@ impl EventIndexer {
 
         let claimer = Address::from_slice(&log.topics()[1].0[12..]);
         let epoch = U256::from_be_bytes(log.topics()[2].0).to::<u64>();
-        println!("[{}][Indexer] Claimed event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
+        info!(logger = "Indexer", route = self.route.name, epoch, block = log.block_number.unwrap_or(0), "Claimed event");
 
         if log.data().data.len() < 32 {
             return;
@@ -358,7 +355,7 @@ impl EventIndexer {
         }
 
         let epoch = U256::from_be_bytes(log.topics()[1].0).to::<u64>();
-        println!("[{}][Indexer] VerificationStarted event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
+        info!(logger = "Indexer", route = self.route.name, epoch, block = log.block_number.unwrap_or(0), "VerificationStarted event");
 
         if !self.claim_store.lock().unwrap().exists(epoch) {
             let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
@@ -366,7 +363,7 @@ impl EventIndexer {
             let grace_end = state.indexing_since.unwrap_or(0) + self.route.settings.sync_lookback_secs;
 
             if block_ts < grace_end {
-                println!("[{}][Indexer] Dropping VerificationStarted for epoch {} - claim outside sync window", self.route.name, epoch);
+                warn!(logger = "Indexer", route = self.route.name, epoch, "Dropping VerificationStarted - claim outside sync window");
                 return;
             }
             panic!("[{}] VerificationStarted for epoch {} but claim not found - this is a bug", self.route.name, epoch);
@@ -398,7 +395,7 @@ impl EventIndexer {
 
         let epoch = U256::from_be_bytes(log.topics()[1].0).to::<u64>();
         let challenger = Address::from_slice(&log.topics()[2].0[12..]);
-        println!("[{}][Indexer] Challenged event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
+        info!(logger = "Indexer", route = self.route.name, epoch, block = log.block_number.unwrap_or(0), "Challenged event");
 
         if !self.claim_store.lock().unwrap().exists(epoch) {
             let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
@@ -406,7 +403,7 @@ impl EventIndexer {
             let grace_end = state.indexing_since.unwrap_or(0) + self.route.settings.sync_lookback_secs;
 
             if block_ts < grace_end {
-                println!("[{}][Indexer] Dropping Challenged for epoch {} - claim outside sync window", self.route.name, epoch);
+                warn!(logger = "Indexer", route = self.route.name, epoch, "Dropping Challenged - claim outside sync window");
                 return;
             }
             panic!("[{}] Challenged for epoch {} but claim not found - this is a bug", self.route.name, epoch);
@@ -434,7 +431,7 @@ impl EventIndexer {
         } else {
             return;
         };
-        println!("[{}][Indexer] Verified event for epoch {} at block {}", self.route.name, epoch, log.block_number.unwrap_or(0));
+        info!(logger = "Indexer", route = self.route.name, epoch, block = log.block_number.unwrap_or(0), "Verified event");
 
         let block_ts = get_log_timestamp(log, &self.route.outbox_provider).await;
 
@@ -443,7 +440,7 @@ impl EventIndexer {
             let grace_end = state.indexing_since.unwrap_or(0) + self.route.settings.sync_lookback_secs;
 
             if block_ts < grace_end {
-                println!("[{}][Indexer] Dropping Verified for epoch {} - claim outside sync window", self.route.name, epoch);
+                warn!(logger = "Indexer", route = self.route.name, epoch, "Dropping Verified - claim outside sync window");
                 return;
             }
             panic!("[{}] Verified for epoch {} but claim not found - this is a bug", self.route.name, epoch);

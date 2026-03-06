@@ -17,6 +17,7 @@ use alloy::rpc::types::Filter;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use tracing::{info, error};
 
 use crate::contracts::{Claim, Party};
 
@@ -38,7 +39,7 @@ fn decode_revert_reason(err_msg: &str) -> Option<String> {
 
     if bytes.len() >= 4 && bytes[0..4] == [0x08, 0xc3, 0x79, 0xa0] {
         if bytes.len() >= 68 {
-            let offset = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+            let offset = u32::from_be_bytes([bytes[4 + 28], bytes[4 + 29], bytes[4 + 30], bytes[4 + 31]]) as usize;
             if bytes.len() >= 36 + offset {
                 let len_start = 4 + offset;
                 let len = u32::from_be_bytes([bytes[len_start + 28], bytes[len_start + 29], bytes[len_start + 30], bytes[len_start + 31]]) as usize;
@@ -120,14 +121,14 @@ pub async fn send_tx(
             if !receipt.status() {
                 return Err(format!("[{}] {} reverted", route_name, action).into());
             }
-            println!("[{}] {} succeeded", route_name, action);
+            info!(logger = "Task", route = route_name, action, "Transaction succeeded");
             Ok(())
         }
         Err(e) => {
             let err_msg = e.to_string();
             match decode_revert_reason(&err_msg) {
                 Some(reason) => {
-                    eprintln!("[{}] {} reverted: {}", route_name, action, reason);
+                    error!(logger = "Task", route = route_name, action, reason = reason.as_str(), "Transaction reverted");
                     Err(format!("[{}] {} reverted: {}", route_name, action, reason).into())
                 }
                 None => Err(e.into()),
@@ -333,7 +334,7 @@ impl TaskStore {
     }
 
     pub fn add_task(&self, task: Task) {
-        println!("[{}][TaskStore] Scheduling {} for epoch {} at {}", self.label(), task.kind.name(), task.epoch, task.execute_after);
+        info!(logger = "TaskStore", route = self.label().as_str(), task = task.kind.name(), epoch = task.epoch, execute_after = task.execute_after, "Scheduling task");
         let mut state = self.load();
         state.tasks.push(task);
         self.save(&state);
@@ -346,7 +347,7 @@ impl TaskStore {
     }
 
     pub fn reschedule_task(&self, task: &Task, execute_after: u64) {
-        println!("[{}][TaskStore] Rescheduling {} for epoch {} to {}", self.label(), task.kind.name(), task.epoch, execute_after);
+        info!(logger = "TaskStore", route = self.label().as_str(), task = task.kind.name(), epoch = task.epoch, execute_after, "Rescheduling task");
         let mut state = self.load();
         for t in &mut state.tasks {
             if t.epoch == task.epoch && t.kind.name() == task.kind.name() {
@@ -399,7 +400,7 @@ impl TaskStore {
         state.tasks.retain(|t| !(t.epoch == epoch && kinds.contains(&t.kind.name())));
         let removed = before - state.tasks.len();
         if removed > 0 {
-            println!("[{}][TaskStore] Invalidated {} tasks for epoch {}", self.label(), removed, epoch);
+            info!(logger = "TaskStore", route = self.label().as_str(), epoch, removed, "Invalidated tasks");
         }
         self.save(&state);
     }

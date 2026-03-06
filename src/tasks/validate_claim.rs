@@ -1,5 +1,6 @@
 use alloy::primitives::U256;
 use std::sync::{Arc, Mutex};
+use tracing::{info, warn, error};
 use crate::config::{Route, ValidatorConfig};
 use crate::contracts::IVeaInbox;
 use crate::finality::is_epoch_finalized;
@@ -25,12 +26,12 @@ pub async fn execute(
     ).await {
         Ok(f) => f,
         Err(e) => {
-            println!("[{}][task::validate_claim] Finality check failed for epoch {}: {}", route.name, epoch, e);
+            error!(logger = "ValidateClaim", route = route.name, epoch, "Finality check failed: {e}");
             return Err(e);
         }
     };
     if !finalized {
-        println!("[{}][task::validate_claim] Epoch {} not yet finalized on L1", route.name, epoch);
+        warn!(logger = "ValidateClaim", route = route.name, epoch, "Epoch not yet finalized on L1");
         return Err("EpochNotFinalized".into());
     }
 
@@ -40,15 +41,14 @@ pub async fn execute(
     let correct_state_root = inbox.snapshots(U256::from(epoch)).call().await?;
 
     if claimed_state_root == correct_state_root {
-        println!("[{}][task::validate_claim] Epoch {} VALID", route.name, epoch);
+        info!(logger = "ValidateClaim", route = route.name, epoch, "VALID");
         task_store.lock().unwrap().add_task(Task {
             epoch,
             execute_after: current_timestamp + route.settings.start_verification_delay,
             kind: TaskKind::StartVerification,
         });
     } else {
-        println!("[{}][task::validate_claim] Epoch {} INVALID - scheduling challenge", route.name, epoch);
-        println!("[{}][task::validate_claim] Claimed: {:?}, Correct: {:?}", route.name, claimed_state_root, correct_state_root);
+        error!(logger = "ValidateClaim", route = route.name, epoch, claimed = ?claimed_state_root, correct = ?correct_state_root, "INVALID - scheduling challenge");
         task_store.lock().unwrap().add_task(Task {
             epoch,
             execute_after: current_timestamp,

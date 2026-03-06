@@ -1,6 +1,7 @@
 use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, DynProvider};
 use alloy::network::Ethereum;
+use tracing::{info, warn};
 use crate::contracts::{IVeaOutbox, IWETH, IOutbox, IRollup};
 use crate::config::{ValidatorConfig, Route, RouteSettings};
 
@@ -8,13 +9,13 @@ pub fn check_finality_config(config: &ValidatorConfig) {
     if config.sequencer_inbox.is_none() {
         panic!("FATAL: SEQUENCER_INBOX must be set for L2 finality verification");
     }
-    println!("✓ Finality config: sequencer_inbox={:?}", config.sequencer_inbox.unwrap());
+    info!(logger = "Startup", sequencer_inbox = ?config.sequencer_inbox.unwrap(), "Finality config OK");
 }
 
 const TIMING_SAFETY_BUFFER_SECS: u64 = 10 * 60;
 
 pub async fn check_rpc_health(routes: &[Route]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("Checking RPC endpoint health...");
+    info!(logger = "Startup", "Checking RPC endpoint health");
 
     let arb_provider = &routes[0].inbox_provider;
     let eth_provider = &routes[0].outbox_provider;
@@ -22,13 +23,13 @@ pub async fn check_rpc_health(routes: &[Route]) -> Result<(), Box<dyn std::error
 
     let arb_block = arb_provider.get_block_number().await
         .map_err(|e| panic!("FATAL: Arbitrum RPC unreachable or unhealthy: {}", e))?;
-    println!("✓ Arbitrum RPC healthy (block: {})", arb_block);
+    info!(logger = "Startup", chain = "Arbitrum", block = arb_block, "RPC healthy");
     let eth_block = eth_provider.get_block_number().await
         .map_err(|e| panic!("FATAL: Ethereum RPC unreachable or unhealthy: {}", e))?;
-    println!("✓ Ethereum RPC healthy (block: {})", eth_block);
+    info!(logger = "Startup", chain = "Ethereum", block = eth_block, "RPC healthy");
     let gnosis_block = gnosis_provider.get_block_number().await
         .map_err(|e| panic!("FATAL: Gnosis RPC unreachable or unhealthy: {}", e))?;
-    println!("✓ Gnosis RPC healthy (block: {})", gnosis_block);
+    info!(logger = "Startup", chain = "Gnosis", block = gnosis_block, "RPC healthy");
     Ok(())
 }
 
@@ -60,7 +61,7 @@ pub async fn check_balances(c: &ValidatorConfig, routes: &[Route]) -> Result<(),
     if xdai_balance < xdai_min {
         panic!("FATAL: Insufficient xDAI on Gnosis for gas. Need {} wei, have {} wei", xdai_min, xdai_balance);
     }
-    println!("✓ Balance check passed: ETH={} wei, WETH={} wei, xDAI={} wei", eth_balance, weth_balance, xdai_balance);
+    info!(logger = "Startup", eth = %eth_balance, weth = %weth_balance, xdai = %xdai_balance, "Balance check passed");
 
     ensure_weth_approval(c, gnosis_provider, wallet_address).await?;
 
@@ -74,7 +75,7 @@ pub async fn ensure_weth_approval(c: &ValidatorConfig, gnosis_provider: DynProvi
     let current_allowance = weth.allowance(wallet_address, c.outbox_arb_to_gnosis).call().await?;
 
     if current_allowance == U256::ZERO {
-        println!("⚠️  No WETH approval found for Gnosis outbox. Setting max approval...");
+        warn!(logger = "Startup", "No WETH approval found for Gnosis outbox, setting max approval");
         let max_approval = U256::MAX;
         let approve_tx = weth.approve(c.outbox_arb_to_gnosis, max_approval);
         let pending = approve_tx.send().await?;
@@ -84,9 +85,9 @@ pub async fn ensure_weth_approval(c: &ValidatorConfig, gnosis_provider: DynProvi
             panic!("FATAL: WETH approval transaction failed");
         }
 
-        println!("✓ WETH max approval set for Gnosis outbox");
+        info!(logger = "Startup", "WETH max approval set for Gnosis outbox");
     } else {
-        println!("✓ WETH approval already exists: {} wei", current_allowance);
+        info!(logger = "Startup", allowance = %current_allowance, "WETH approval exists");
     }
 
     Ok(())
@@ -111,10 +112,10 @@ pub async fn load_route_settings(
     arb_outbox_address: Address,
     arb_outbox_provider: &DynProvider<Ethereum>,
 ) -> RouteSettings {
-    println!("[{}] Loading route settings from contracts...", route.name);
+    info!(logger = "Startup", route = route.name, "Loading route settings from contracts");
 
     let avg_block_time_ms = get_avg_block_time_ms(arb_outbox_provider).await;
-    println!("[{}] Average block time: {}ms", route.name, avg_block_time_ms);
+    info!(logger = "Startup", route = route.name, avg_block_time_ms, "Block time computed");
 
     let arb_outbox = IOutbox::new(arb_outbox_address, arb_outbox_provider.clone());
     let rollup_address = arb_outbox.rollup().call().await
@@ -123,22 +124,20 @@ pub async fn load_route_settings(
     let confirm_period_blocks: u64 = rollup.confirmPeriodBlocks().call().await
         .expect("Failed to get confirmPeriodBlocks")
         .max(14458);
-    println!("[{}] Rollup confirmPeriodBlocks: {}", route.name, confirm_period_blocks);
+    info!(logger = "Startup", route = route.name, confirm_period_blocks, "Rollup config loaded");
 
     let outbox = IVeaOutbox::new(route.outbox_address, route.outbox_provider.clone());
     let sequencer_delay_limit = outbox.sequencerDelayLimit().call().await.expect("Failed to get sequencerDelayLimit").to::<u64>();
     let min_challenge_period = outbox.minChallengePeriod().call().await.expect("Failed to get minChallengePeriod").to::<u64>();
     let epoch_period = outbox.epochPeriod().call().await.expect("Failed to get epochPeriod").to::<u64>();
-    println!("[{}] Outbox params: sequencerDelayLimit={}s, epochPeriod={}s, minChallengePeriod={}s",
-        route.name, sequencer_delay_limit, epoch_period, min_challenge_period);
+    info!(logger = "Startup", route = route.name, sequencer_delay_limit, epoch_period, min_challenge_period, "Outbox params loaded");
 
     let relay_delay_secs = (confirm_period_blocks * avg_block_time_ms / 1000) + TIMING_SAFETY_BUFFER_SECS;
     let start_verification_delay = sequencer_delay_limit + epoch_period + TIMING_SAFETY_BUFFER_SECS;
     let min_challenge_period_with_buffer = min_challenge_period + TIMING_SAFETY_BUFFER_SECS;
     let sync_lookback_secs = relay_delay_secs + start_verification_delay + min_challenge_period_with_buffer + TIMING_SAFETY_BUFFER_SECS;
 
-    println!("[{}] Computed: relay_delay={}s, start_verification_delay={}s, min_challenge_period={}s, sync_lookback={}s",
-        route.name, relay_delay_secs, start_verification_delay, min_challenge_period_with_buffer, sync_lookback_secs);
+    info!(logger = "Startup", route = route.name, relay_delay_secs, start_verification_delay, min_challenge_period = min_challenge_period_with_buffer, sync_lookback_secs, "Route timing computed");
 
     RouteSettings {
         relay_delay_secs,

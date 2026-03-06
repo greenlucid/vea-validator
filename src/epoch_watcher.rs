@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use alloy::providers::Provider;
 use tokio::time::{sleep, Duration};
+use tracing::info;
 
 use crate::config::{Route, ValidatorConfig};
 use crate::tasks;
@@ -53,7 +54,7 @@ impl EpochWatcher {
                 if time_since_epoch_start >= AFTER_EPOCH_BUFFER && current_epoch > 0 {
                     let prev_epoch = current_epoch - 1;
                     if last_after_epoch != Some(prev_epoch) {
-                        println!("[{}][EpochWatcher] Checking claim for epoch {}", self.route.name, prev_epoch);
+                        info!(logger = "EpochWatcher", route = self.route.name, epoch = prev_epoch, "Checking claim");
                         tasks::claim::execute(&self.config, &self.route, prev_epoch, &self.claim_store, now).await
                             .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to claim epoch {}: {}", self.route.name, prev_epoch, e));
                         last_after_epoch = Some(prev_epoch);

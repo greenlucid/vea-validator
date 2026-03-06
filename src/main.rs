@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 use std::panic::AssertUnwindSafe;
 use futures_util::future::{select_all, FutureExt};
 use tokio::time::{sleep, Duration};
+use tracing::{info, error};
+use tracing_subscriber::EnvFilter;
 use vea_validator::{
     epoch_watcher::EpochWatcher,
     indexer::EventIndexer,
@@ -30,7 +32,7 @@ async fn run_route_with_retry(config: ValidatorConfig, route: Route) {
                 } else {
                     "unknown panic".to_string()
                 };
-                println!("[{}] Route crashed: {}. Retrying in {} seconds...", route.name, msg, RETRY_DELAY_SECS);
+                error!(logger = "Main", route = route.name, delay_secs = RETRY_DELAY_SECS, "Route crashed: {msg}. Retrying...");
                 sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
             }
         }
@@ -48,7 +50,7 @@ async fn run_route(config: ValidatorConfig, route: Route) {
         .try_into()
         .expect("epochPeriod overflow");
 
-    println!("[{}] Inbox: {:?}, Outbox: {:?}, epochPeriod: {}s", route.name, route.inbox_address, route.outbox_address, epoch_period);
+    info!(logger = "Main", route = route.name, inbox = ?route.inbox_address, outbox = ?route.outbox_address, epoch_period, "Route initialized");
 
     let task_store = Arc::new(Mutex::new(TaskStore::new(&schedule_path)));
     let claim_store = Arc::new(Mutex::new(ClaimStore::new(&claims_path)));
@@ -75,8 +77,29 @@ async fn run_route(config: ValidatorConfig, route: Route) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt()
+        .json()
+        .flatten_event(true)
+        .with_target(false)
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info"))
+        )
+        .init();
+
+    std::panic::set_hook(Box::new(|info| {
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        tracing::error!(logger = "Panic", "{msg}");
+    }));
+
     let c = ValidatorConfig::from_env()?;
-    println!("Validator wallet address: {}", c.wallet.default_signer().address());
+    info!(logger = "Main", address = %c.wallet.default_signer().address(), "Validator started");
 
     let mut routes = c.build_routes();
     check_rpc_health(&routes).await?;
@@ -88,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         route.settings = load_route_settings(route, c.arb_outbox, &eth_provider).await;
     }
 
-    println!("Starting validator for {} routes...", routes.len());
+    info!(logger = "Main", route_count = routes.len(), "Starting validator");
 
     let handles: Vec<_> = routes.into_iter()
         .map(|route| {
@@ -100,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tokio::select! {
         _ = select_all(handles) => {}
         _ = tokio::signal::ctrl_c() => {
-            println!("\nShutting down...");
+            info!(logger = "Main", "Shutting down");
         }
     }
 

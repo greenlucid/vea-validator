@@ -1,6 +1,7 @@
 use alloy::providers::Provider;
 use std::sync::{Arc, Mutex};
 use tokio::time::{sleep, Duration};
+use tracing::info;
 
 use crate::config::{Route, ValidatorConfig};
 use crate::tasks;
@@ -60,13 +61,13 @@ impl TaskDispatcher {
             return;
         }
 
-        println!("[{}][Dispatcher] Processing {} ready tasks", self.route.name, ready.len());
+        info!(logger = "Dispatcher", route = self.route.name, count = ready.len(), "Processing ready tasks");
 
         for task in ready {
-            println!("[{}][Dispatcher] Executing {} for epoch {}", self.route.name, task.kind.name(), task.epoch);
+            info!(logger = "Dispatcher", route = self.route.name, task = task.kind.name(), epoch = task.epoch, "Executing task");
             let success = self.execute_task(&task, now).await;
             if success {
-                println!("[{}][Dispatcher] Completed {} for epoch {}", self.route.name, task.kind.name(), task.epoch);
+                info!(logger = "Dispatcher", route = self.route.name, task = task.kind.name(), epoch = task.epoch, "Completed task");
                 self.task_store.lock().unwrap().remove_task(&task);
             }
         }
