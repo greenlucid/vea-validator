@@ -77,6 +77,13 @@ On startup, indexer initializes from `now - sync_lookback_secs`. The lookback is
 
 ## Error Handling
 
+### RPC Resilience
+- **30s HTTP timeout** on all RPC providers (10s connect timeout) — prevents infinite hangs on unresponsive endpoints
+- **Binary search (`find_block_by_timestamp`)**: retries each individual RPC call 3x with 2s delay before panicking. Binary search state (lo/hi) preserved between retries.
+- **Indexer `scan_chain`**: returns false on RPC failure, retries next cycle (1s later). Does not crash the route.
+- **Epoch watcher**: logs warning and continues loop on RPC failure. Does not crash the route.
+- **Fallback layer**: with multiple RPCs configured, failures rotate to the next RPC automatically
+
 ### General Errors
 - **RPC failures during indexing**: logged, retry next poll
 - **Task failures**: task stays in queue, retried next poll

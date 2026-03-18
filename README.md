@@ -8,7 +8,18 @@ Supports routes:
 
 ## Running with Docker
 
-WIP
+```bash
+docker build -t vea-validator .
+docker run --rm --env-file .env -v $(pwd)/data:/app/data vea-validator
+```
+
+Environment variables (including `PRIVATE_KEY`) are passed at runtime via `--env-file`. They are NOT baked into the image. The `-v` flag persists sync state and scheduled tasks between runs.
+
+If your `.env` file uses `export` prefixes (for compatibility with `source`), strip them with sed:
+
+```bash
+sed 's/^export //' .env | docker run --rm -v $(pwd)/data:/app/data --env-file /dev/stdin vea-validator
+```
 
 ## Development
 
@@ -76,7 +87,16 @@ RPC URLs support comma-separated values for failover:
 export ETHEREUM_RPC_URL=https://rpc1.example.com,https://rpc2.example.com,https://rpc3.example.com
 ```
 
-The validator will automatically try the next RPC if one fails.
+The validator will automatically try the next RPC if one fails. All RPC calls have a 30s timeout to prevent hanging on unresponsive endpoints.
+
+### Logging
+
+JSON structured logs to stdout. Control log level with `RUST_LOG`:
+
+```bash
+export RUST_LOG=info   # default
+export RUST_LOG=debug  # verbose
+```
 
 ## Learn More
 

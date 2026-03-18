@@ -6,8 +6,11 @@ use alloy::transports::http::Http;
 use alloy::transports::layers::FallbackLayer;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use std::time::Duration;
 use std::collections::HashMap;
 use tower::ServiceBuilder;
+
+const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct ChainInfo {
@@ -64,12 +67,24 @@ pub struct ValidatorConfig {
     pub ethereum_provider: DynProvider<Ethereum>,
     pub make_claims: bool,
 }
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(RPC_TIMEOUT)
+        .build()
+        .expect("Failed to build HTTP client")
+}
+
 fn build_provider_from_urls(urls: &[String], wallet: &EthereumWallet) -> DynProvider<Ethereum> {
+    let http_client = build_http_client();
+
     if urls.len() == 1 {
+        let transport = Http::with_client(http_client, urls[0].parse().expect("Invalid RPC URL"));
+        let client = RpcClient::builder().transport(transport, false);
         return DynProvider::new(
             ProviderBuilder::new()
                 .wallet(wallet.clone())
-                .connect_http(urls[0].parse().expect("Invalid RPC URL"))
+                .connect_client(client)
         );
     }
 
@@ -77,7 +92,7 @@ fn build_provider_from_urls(urls: &[String], wallet: &EthereumWallet) -> DynProv
         .with_active_transport_count(NonZeroUsize::new(1).unwrap());
 
     let transports: Vec<_> = urls.iter()
-        .map(|url| Http::new(url.parse().expect("Invalid RPC URL")))
+        .map(|url| Http::with_client(http_client.clone(), url.parse().expect("Invalid RPC URL")))
         .collect();
 
     let transport = ServiceBuilder::new()

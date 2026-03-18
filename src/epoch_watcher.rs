@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use alloy::providers::Provider;
 use tokio::time::{sleep, Duration};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::{Route, ValidatorConfig};
 use crate::tasks;
@@ -38,7 +38,14 @@ impl EpochWatcher {
         let mut last_before_epoch: Option<u64> = None;
         let mut last_after_epoch: Option<u64> = None;
         loop {
-            let now = self.get_current_timestamp().await?;
+            let now = match self.get_current_timestamp().await {
+                Ok(ts) => ts,
+                Err(e) => {
+                    warn!(logger = "EpochWatcher", route = self.route.name, "Failed to get timestamp: {e}");
+                    sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
+            };
             let current_epoch = now / epoch_period;
             let next_epoch_start = (current_epoch + 1) * epoch_period;
             let time_until_next_epoch = next_epoch_start.saturating_sub(now);

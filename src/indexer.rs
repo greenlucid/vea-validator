@@ -131,9 +131,17 @@ impl EventIndexer {
             }
         };
 
-        let current_block_data = provider.get_block_by_number(current_block.into()).await
-            .expect("Failed to get block data")
-            .expect("Block not found");
+        let current_block_data = match provider.get_block_by_number(current_block.into()).await {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                error!(logger = "Indexer", route = self.route.name, chain = label, block = current_block, "Block not found");
+                return false;
+            }
+            Err(e) => {
+                error!(logger = "Indexer", route = self.route.name, chain = label, "Failed to get block data: {e}");
+                return false;
+            }
+        };
         let now = current_block_data.header.timestamp;
 
         let state = self.task_store.lock().unwrap().load();
@@ -143,9 +151,13 @@ impl EventIndexer {
         };
 
         let (catchup_start, catchup_target, last_logged_pct) = catchup;
+        let mut target_block = catchup_target.load(Ordering::Relaxed);
 
-        let target_ts = now.saturating_sub(FINALITY_BUFFER_SECS);
-        let target_block = find_block_by_timestamp(provider, target_ts).await;
+        if target_block == 0 || from_block >= target_block {
+            let target_ts = now.saturating_sub(FINALITY_BUFFER_SECS);
+            target_block = find_block_by_timestamp(provider, target_ts).await;
+            catchup_target.store(target_block, Ordering::Relaxed);
+        }
 
         if from_block >= target_block {
             catchup_start.store(0, Ordering::Relaxed);
@@ -154,8 +166,7 @@ impl EventIndexer {
             return true;
         }
 
-        if catchup_start.load(Ordering::Relaxed) == 0 || catchup_target.load(Ordering::Relaxed) != target_block {
-            catchup_target.store(target_block, Ordering::Relaxed);
+        if catchup_start.load(Ordering::Relaxed) == 0 {
             catchup_start.store(from_block, Ordering::Relaxed);
             last_logged_pct.store(0, Ordering::Relaxed);
         }
