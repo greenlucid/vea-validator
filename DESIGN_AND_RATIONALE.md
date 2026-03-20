@@ -79,7 +79,7 @@ On startup, indexer initializes from `now - sync_lookback_secs`. The lookback is
 
 ### RPC Resilience
 - **30s HTTP timeout** on all RPC providers (10s connect timeout) — prevents infinite hangs on unresponsive endpoints
-- **Binary search (`find_block_by_timestamp`)**: retries each individual RPC call 3x with 2s delay before panicking. Binary search state (lo/hi) preserved between retries.
+- **Binary search (`find_block_by_timestamp`)**: retries each individual RPC call 3x with exponential backoff (5s, 15s, 45s) before panicking. Binary search state (lo/hi) preserved between retries.
 - **Indexer `scan_chain`**: returns false on RPC failure, retries next cycle (1s later). Does not crash the route.
 - **Epoch watcher**: logs warning and continues loop on RPC failure. Does not crash the route.
 - **Fallback layer**: with multiple RPCs configured, failures rotate to the next RPC automatically
@@ -197,6 +197,7 @@ This approach handles arbitrary batch posting delays without hitting RPC block r
 
 **Task behavior when not finalized:**
 - `ValidateClaim` returns `Err("EpochNotFinalized")` and gets rescheduled +30 minutes
+- `Claim` (epoch watcher): returns `Err("EpochNotFinalized")`, retries after 5 minutes. If someone else claims in the meantime, the "Already claimed" check in `claim::execute` detects it and stops.
 - This is expected during normal operation when tasks are scheduled close to epoch boundaries, or on testnet where batch posting is sporadic
 
 ## Known Issues

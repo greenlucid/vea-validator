@@ -12,20 +12,23 @@ use alloy::rpc::types::Block;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
 
-const RPC_RETRIES: u32 = 3;
-const RPC_RETRY_DELAY: Duration = Duration::from_secs(2);
+const RPC_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(45),
+];
 
 async fn get_block_with_retry(provider: &DynProvider<Ethereum>, block_num: alloy::eips::BlockNumberOrTag) -> Block {
-    for attempt in 1..=RPC_RETRIES {
+    for (attempt, delay) in RPC_RETRY_DELAYS.iter().enumerate() {
         match provider.get_block_by_number(block_num).await {
             Ok(Some(block)) => return block,
             Ok(None) => panic!("Block {block_num} not found"),
             Err(e) => {
-                if attempt == RPC_RETRIES {
-                    panic!("Failed to get block {block_num} after {RPC_RETRIES} attempts: {e}");
+                if attempt == RPC_RETRY_DELAYS.len() - 1 {
+                    panic!("Failed to get block {block_num} after {} attempts: {e}", RPC_RETRY_DELAYS.len());
                 }
-                warn!(logger = "RPC", attempt, "Failed to get block {block_num}: {e}, retrying...");
-                sleep(RPC_RETRY_DELAY).await;
+                warn!(logger = "RPC", attempt = attempt + 1, "Failed to get block {block_num}: {e}, retrying...");
+                sleep(*delay).await;
             }
         }
     }

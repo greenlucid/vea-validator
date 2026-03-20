@@ -37,6 +37,7 @@ impl EpochWatcher {
     pub async fn watch_epochs(&self, epoch_period: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut last_before_epoch: Option<u64> = None;
         let mut last_after_epoch: Option<u64> = None;
+        let mut skip_claim_until: u64 = 0;
         loop {
             let now = match self.get_current_timestamp().await {
                 Ok(ts) => ts,
@@ -56,15 +57,19 @@ impl EpochWatcher {
                 last_before_epoch = Some(current_epoch);
             }
 
-            if self.make_claims && self.task_store.lock().unwrap().is_on_sync() {
+            if self.make_claims && self.task_store.lock().unwrap().is_on_sync() && now >= skip_claim_until {
                 let time_since_epoch_start = now.saturating_sub(current_epoch * epoch_period);
                 if time_since_epoch_start >= AFTER_EPOCH_BUFFER && current_epoch > 0 {
                     let prev_epoch = current_epoch - 1;
                     if last_after_epoch != Some(prev_epoch) {
                         info!(logger = "EpochWatcher", route = self.route.name, epoch = prev_epoch, "Checking claim");
-                        tasks::claim::execute(&self.config, &self.route, prev_epoch, &self.claim_store, now).await
-                            .unwrap_or_else(|e| panic!("[{}] FATAL: Failed to claim epoch {}: {}", self.route.name, prev_epoch, e));
-                        last_after_epoch = Some(prev_epoch);
+                        match tasks::claim::execute(&self.config, &self.route, prev_epoch, &self.claim_store, now).await {
+                            Ok(()) => { last_after_epoch = Some(prev_epoch); }
+                            Err(e) if e.to_string() == "EpochNotFinalized" => {
+                                skip_claim_until = now + 300;
+                            }
+                            Err(e) => panic!("[{}] FATAL: Failed to claim epoch {}: {}", self.route.name, prev_epoch, e),
+                        }
                     }
                 }
             }
