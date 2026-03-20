@@ -126,7 +126,7 @@ impl EventIndexer {
         let current_block = match provider.get_block_number().await {
             Ok(b) => b,
             Err(e) => {
-                error!(logger = "Indexer", route = self.route.name, chain = label, "Failed to get block number: {e}");
+                warn!(logger = "Indexer", route = self.route.name, chain = label, "Failed to get block number: {e}");
                 return false;
             }
         };
@@ -134,11 +134,11 @@ impl EventIndexer {
         let current_block_data = match provider.get_block_by_number(current_block.into()).await {
             Ok(Some(b)) => b,
             Ok(None) => {
-                error!(logger = "Indexer", route = self.route.name, chain = label, block = current_block, "Block not found");
+                warn!(logger = "Indexer", route = self.route.name, chain = label, block = current_block, "Block not found");
                 return false;
             }
             Err(e) => {
-                error!(logger = "Indexer", route = self.route.name, chain = label, "Failed to get block data: {e}");
+                warn!(logger = "Indexer", route = self.route.name, chain = label, "Failed to get block data: {e}");
                 return false;
             }
         };
@@ -227,7 +227,7 @@ impl EventIndexer {
                 is_done
             }
             Err(e) => {
-                error!(logger = "Indexer", route = self.route.name, chain = label, from_block, to_block, "Failed to query logs: {e}");
+                warn!(logger = "Indexer", route = self.route.name, chain = label, from_block, to_block, "Failed to query logs: {e}");
                 false
             }
         }
@@ -374,7 +374,7 @@ impl EventIndexer {
             let grace_end = state.indexing_since.unwrap_or(0) + self.route.settings.sync_lookback_secs;
 
             if block_ts < grace_end {
-                warn!(logger = "Indexer", route = self.route.name, epoch, "Dropping VerificationStarted - claim outside sync window");
+                info!(logger = "Indexer", route = self.route.name, epoch, "Dropping VerificationStarted - claim outside sync window");
                 return;
             }
             panic!("[{}] VerificationStarted for epoch {} but claim not found - this is a bug", self.route.name, epoch);
@@ -414,7 +414,7 @@ impl EventIndexer {
             let grace_end = state.indexing_since.unwrap_or(0) + self.route.settings.sync_lookback_secs;
 
             if block_ts < grace_end {
-                warn!(logger = "Indexer", route = self.route.name, epoch, "Dropping Challenged - claim outside sync window");
+                info!(logger = "Indexer", route = self.route.name, epoch, "Dropping Challenged - claim outside sync window");
                 return;
             }
             panic!("[{}] Challenged for epoch {} but claim not found - this is a bug", self.route.name, epoch);
@@ -451,7 +451,7 @@ impl EventIndexer {
             let grace_end = state.indexing_since.unwrap_or(0) + self.route.settings.sync_lookback_secs;
 
             if block_ts < grace_end {
-                warn!(logger = "Indexer", route = self.route.name, epoch, "Dropping Verified - claim outside sync window");
+                info!(logger = "Indexer", route = self.route.name, epoch, "Dropping Verified - claim outside sync window");
                 return;
             }
             panic!("[{}] Verified for epoch {} but claim not found - this is a bug", self.route.name, epoch);

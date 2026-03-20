@@ -1,7 +1,7 @@
 use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, DynProvider};
 use alloy::network::Ethereum;
-use tracing::{info, warn};
+use tracing::info;
 use crate::contracts::{IVeaOutbox, IWETH, IOutbox, IRollup};
 use crate::config::{ValidatorConfig, Route, RouteSettings};
 
@@ -75,7 +75,7 @@ pub async fn ensure_weth_approval(c: &ValidatorConfig, gnosis_provider: DynProvi
     let current_allowance = weth.allowance(wallet_address, c.outbox_arb_to_gnosis).call().await?;
 
     if current_allowance == U256::ZERO {
-        warn!(logger = "Startup", "No WETH approval found for Gnosis outbox, setting max approval");
+        info!(logger = "Startup", "No WETH approval found for Gnosis outbox, setting max approval");
         let max_approval = U256::MAX;
         let approve_tx = weth.approve(c.outbox_arb_to_gnosis, max_approval);
         let pending = approve_tx.send().await?;

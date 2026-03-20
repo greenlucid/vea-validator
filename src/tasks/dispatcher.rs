@@ -103,7 +103,7 @@ impl TaskDispatcher {
                 match tasks::challenge::execute(&self.config, &self.route, epoch, &self.claim_store).await {
                     Ok(_) => true,
                     Err(e) if e.to_string() == "Insufficient funds" => {
-                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 15 * 60);
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 30 * 60);
                         true
                     }
                     Err(e) if e.to_string() == "VerificationStarted" => {
@@ -158,7 +158,10 @@ impl TaskDispatcher {
                         self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 60 * 60);
                         true
                     }
-                    Err(_) => false,
+                    Err(_) => {
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 30 * 60);
+                        true
+                    }
                 }
             }
             TaskKind::WithdrawDeposit => {
