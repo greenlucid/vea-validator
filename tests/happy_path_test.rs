@@ -9,7 +9,7 @@ use vea_validator::{
     indexer::EventIndexer,
     tasks::{dispatcher::TaskDispatcher, TaskStore, ClaimStore},
 };
-use common::{restore_pristine, advance_time, send_messages};
+use common::{restore_pristine, advance_time, advance_past_epoch, send_messages};
 use alloy::providers::Provider;
 
 #[tokio::test]
@@ -29,10 +29,7 @@ async fn test_start_verification() {
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
     let state_root = inbox.snapshots(U256::from(epoch)).call().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
@@ -80,10 +77,7 @@ async fn test_verify_snapshot() {
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
     let state_root = inbox.snapshots(U256::from(epoch)).call().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
@@ -140,10 +134,7 @@ async fn test_full_happy_path_via_indexer() {
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
     let state_root = inbox.snapshots(U256::from(epoch)).call().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();

@@ -10,7 +10,7 @@ use vea_validator::{
     tasks::{dispatcher::TaskDispatcher, TaskStore, ClaimStore},
     startup::ensure_weth_approval,
 };
-use common::{restore_pristine, advance_time, send_messages};
+use common::{restore_pristine, advance_time, advance_past_epoch, send_messages};
 use alloy::providers::Provider;
 
 #[tokio::test]
@@ -29,10 +29,7 @@ async fn test_challenge_bad_claim() {
     let epoch: u64 = inbox.epochNow().call().await.unwrap().try_into().unwrap();
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
 
     let wrong_root = FixedBytes::<32>::from([0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     let deposit = outbox.deposit().call().await.unwrap();
@@ -88,10 +85,7 @@ async fn test_challenge_bad_claim_gnosis() {
     let epoch: u64 = inbox.epochNow().call().await.unwrap().try_into().unwrap();
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
 
     let wrong_root = FixedBytes::<32>::from([0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     outbox.claim(U256::from(epoch), wrong_root).send().await.unwrap().get_receipt().await.unwrap();
@@ -178,10 +172,7 @@ async fn test_start_verification_drops_task_when_claim_challenged() {
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
     let correct_root = inbox.snapshots(U256::from(epoch)).call().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
 
     outbox.claim(U256::from(epoch), correct_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 

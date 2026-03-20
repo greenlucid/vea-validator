@@ -10,7 +10,7 @@ use vea_validator::{
     epoch_watcher::EpochWatcher,
     tasks::{TaskStore, ClaimStore},
 };
-use common::{restore_pristine, advance_time, send_messages};
+use common::{restore_pristine, advance_time, advance_past_epoch, send_messages};
 use alloy::providers::Provider;
 
 #[tokio::test]
@@ -68,10 +68,8 @@ async fn test_claim() {
     let epoch: u64 = inbox.epochNow().call().await.unwrap().try_into().unwrap();
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
+    advance_time(15 * 60).await;
 
     assert_eq!(outbox.claimHashes(U256::from(epoch)).call().await.unwrap(), FixedBytes::<32>::ZERO);
 
@@ -148,10 +146,7 @@ async fn test_claim_race_condition() {
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
     let snapshot = inbox.snapshots(U256::from(epoch)).call().await.unwrap();
 
-    advance_time(epoch_period + 15 * 60 + 10).await;
-    let ts = outbox_provider.get_block_by_number(Default::default()).await.unwrap().unwrap().header.timestamp;
-    let target = (epoch + 1) * epoch_period + 15 * 60 + 10;
-    if target > ts { advance_time(target - ts).await; }
+    advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
 
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), snapshot).value(deposit).send().await.unwrap().get_receipt().await.unwrap();

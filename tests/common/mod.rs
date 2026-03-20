@@ -36,6 +36,14 @@ pub async fn restore_pristine() {
     std::fs::write(SNAPSHOT_FILE, new_id.as_str().unwrap()).unwrap();
 }
 
+pub async fn advance_past_epoch(outbox_provider: &impl Provider, epoch: u64, epoch_period: u64) {
+    let ts = outbox_provider
+        .get_block_by_number(Default::default()).await.unwrap().unwrap()
+        .header.timestamp;
+    let target = (epoch + 1) * epoch_period + 10;
+    advance_time(target - ts).await;
+}
+
 pub async fn advance_time(seconds: u64) {
     let arb = ProviderBuilder::new().connect_http("http://localhost:8545".parse().unwrap());
     let eth = ProviderBuilder::new().connect_http("http://localhost:8546".parse().unwrap());
