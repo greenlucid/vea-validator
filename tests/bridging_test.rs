@@ -36,7 +36,7 @@ async fn test_send_snapshot_after_challenge() {
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), bad_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -53,7 +53,7 @@ async fn test_send_snapshot_after_challenge() {
     dispatcher.process_pending().await;
     dispatcher.process_pending().await;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
@@ -87,7 +87,7 @@ async fn test_send_snapshot_on_challenged_event() {
     let timestamp_claimed = outbox_provider.get_block_by_number(claim_receipt.block_number.unwrap().into())
         .await.unwrap().unwrap().header.timestamp as u32;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -113,7 +113,7 @@ async fn test_send_snapshot_on_challenged_event() {
     };
     outbox.challenge(U256::from(epoch), claim).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
@@ -162,7 +162,7 @@ async fn test_execute_relay() {
     outbox.challenge(U256::from(epoch), claim).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
     let balance_after_challenge = outbox_provider.get_balance(c.wallet.default_signer().address()).await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -178,7 +178,7 @@ async fn test_execute_relay() {
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
 
     let relay_delay = 7 * 24 * 3600 + 3600;
@@ -190,11 +190,11 @@ async fn test_execute_relay() {
     let logs = outbox_provider.get_logs(&filter).await.unwrap();
     assert!(!logs.is_empty(), "Verified not emitted - resolveDisputedClaim failed");
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
@@ -235,7 +235,7 @@ async fn test_send_snapshot_gnosis() {
     let bad_root = FixedBytes::<32>::from([0xBA; 32]);
     outbox.claim(U256::from(epoch), bad_root).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -251,7 +251,7 @@ async fn test_send_snapshot_gnosis() {
     dispatcher.process_pending().await;
     dispatcher.process_pending().await;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
@@ -298,7 +298,7 @@ async fn test_execute_relay_skips_spent() {
     };
     outbox.challenge(U256::from(epoch), claim).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -312,7 +312,7 @@ async fn test_execute_relay_skips_spent() {
     let dispatcher = TaskDispatcher::new(c.clone(), route.clone(), task_store.clone(), claim_store.clone());
 
     indexer.scan_once().await;
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
 
     let relay_delay = 7 * 24 * 3600 + 3600;
@@ -349,7 +349,7 @@ async fn test_challenger_wins_bad_claim() {
     let timestamp_claimed = outbox_provider.get_block_by_number(claim_receipt.block_number.unwrap().into())
         .await.unwrap().unwrap().header.timestamp as u32;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -371,11 +371,11 @@ async fn test_challenger_wins_bad_claim() {
     let logs = outbox_provider.get_logs(&filter).await.unwrap();
     assert!(!logs.is_empty(), "Validator did not challenge bad claim");
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
 
     let relay_delay = 7 * 24 * 3600 + 3600;

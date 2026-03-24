@@ -1,7 +1,7 @@
 use alloy::providers::Provider;
 use std::sync::{Arc, Mutex};
 use tokio::time::{sleep, Duration};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::{Route, ValidatorConfig};
 use crate::tasks;
@@ -45,10 +45,13 @@ impl TaskDispatcher {
 
         let state = self.task_store.lock().unwrap().load();
 
-        let now = self.route.outbox_provider.get_block_by_number(Default::default()).await
-            .expect("Failed to get latest block")
-            .expect("Latest block not found")
-            .header.timestamp;
+        let now = match self.route.outbox_provider.get_block_by_number(Default::default()).await {
+            Ok(Some(block)) => block.header.timestamp,
+            _ => {
+                warn!(logger = "Dispatcher", route = self.route.name, "Failed to get latest block, retrying next cycle");
+                return;
+            }
+        };
 
         let ready: Vec<Task> = state
             .tasks
@@ -107,7 +110,7 @@ impl TaskDispatcher {
                         true
                     }
                     Err(e) if e.to_string() == "VerificationStarted" => {
-                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 15 * 60);
+                        self.task_store.lock().unwrap().reschedule_task(task, current_timestamp + 20 * 60);
                         true
                     }
                     Err(e) if e.to_string().contains("Invalid claim") => {

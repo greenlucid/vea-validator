@@ -69,7 +69,7 @@ async fn test_claim() {
     inbox.saveSnapshot().send().await.unwrap().get_receipt().await.unwrap();
 
     advance_past_epoch(&*outbox_provider, epoch, epoch_period).await;
-    advance_time(15 * 60).await;
+    advance_time(20 * 60).await;
 
     assert_eq!(outbox.claimHashes(U256::from(epoch)).call().await.unwrap(), FixedBytes::<32>::ZERO);
 

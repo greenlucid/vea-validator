@@ -8,7 +8,7 @@ use crate::tasks;
 use crate::tasks::{ClaimStore, TaskStore};
 
 const BEFORE_EPOCH_BUFFER: u64 = 60;
-const AFTER_EPOCH_BUFFER: u64 = 15 * 60;
+const AFTER_EPOCH_BUFFER: u64 = 20 * 60;
 
 pub struct EpochWatcher {
     config: ValidatorConfig,
@@ -68,7 +68,10 @@ impl EpochWatcher {
                             Err(e) if e.to_string() == "EpochNotFinalized" => {
                                 skip_claim_until = now + 300;
                             }
-                            Err(e) => panic!("[{}] FATAL: Failed to claim epoch {}: {}", self.route.name, prev_epoch, e),
+                            Err(e) if e.to_string().contains("timed out") || e.to_string().contains("connection") => {
+                            warn!(logger = "EpochWatcher", route = self.route.name, epoch = prev_epoch, "Claim RPC error: {e}, retrying next cycle");
+                        }
+                        Err(e) => panic!("[{}] FATAL: Failed to claim epoch {}: {}", self.route.name, prev_epoch, e),
                         }
                     }
                 }

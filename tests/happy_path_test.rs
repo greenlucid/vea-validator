@@ -34,7 +34,7 @@ async fn test_start_verification() {
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -82,7 +82,7 @@ async fn test_verify_snapshot() {
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -101,7 +101,7 @@ async fn test_verify_snapshot() {
     advance_time(25 * 3600 + 10).await;
     dispatcher.process_pending().await;
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
 
     let min_challenge = outbox.minChallengePeriod().call().await.unwrap().to::<u64>();
@@ -140,7 +140,7 @@ async fn test_full_happy_path_via_indexer() {
     outbox.claim(U256::from(epoch), state_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
     let balance_after_claim = outbox_provider.get_balance(c.wallet.default_signer().address()).await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -164,7 +164,7 @@ async fn test_full_happy_path_via_indexer() {
     let logs = outbox_provider.get_logs(&filter).await.unwrap();
     assert!(!logs.is_empty(), "Indexer/Dispatcher did not start verification");
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
 
     let min_challenge = outbox.minChallengePeriod().call().await.unwrap().to::<u64>();
@@ -179,7 +179,7 @@ async fn test_full_happy_path_via_indexer() {
     let logs = outbox_provider.get_logs(&filter).await.unwrap();
     assert!(!logs.is_empty(), "Indexer/Dispatcher did not verify snapshot");
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
     indexer.scan_once().await;
     dispatcher.process_pending().await;
 

@@ -35,7 +35,7 @@ async fn test_challenge_bad_claim() {
     let deposit = outbox.deposit().call().await.unwrap();
     outbox.claim(U256::from(epoch), wrong_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -90,7 +90,7 @@ async fn test_challenge_bad_claim_gnosis() {
     let wrong_root = FixedBytes::<32>::from([0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     outbox.claim(U256::from(epoch), wrong_root).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");
@@ -176,7 +176,7 @@ async fn test_start_verification_drops_task_when_claim_challenged() {
 
     outbox.claim(U256::from(epoch), correct_root).value(deposit).send().await.unwrap().get_receipt().await.unwrap();
 
-    advance_time(15 * 60 + 10).await;
+    advance_time(20 * 60 + 10).await;
 
     let test_dir = tempfile::tempdir().unwrap();
     let schedule_path = test_dir.path().join("schedule.json");

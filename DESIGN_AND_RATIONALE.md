@@ -23,7 +23,7 @@ main.rs
 ### EpochWatcher
 Polls every 10s. Two responsibilities:
 1. **Save snapshot** ~60s before epoch ends (if messages exist and count changed)
-2. **Make claim** ~15min after epoch starts (if `MAKE_CLAIMS=true` and synced)
+2. **Make claim** ~20min after epoch starts (if `MAKE_CLAIMS=true` and synced)
 
 **Snapshot saving logic:** The indexer tracks `last_saved_count` from `SnapshotSaved` events. Before saving, we compare `inbox.count()` to `last_saved_count`:
 - If `count == 0`: no messages, skip
@@ -32,12 +32,12 @@ Polls every 10s. Two responsibilities:
 
 **Cold-start behavior:** If no `SnapshotSaved` events exist in the sync window (fresh chain or long hiatus), `last_saved_count` defaults to 0. This ensures the validator will save a snapshot if any messages exist, preventing bridge staleness when this is the only validator running.
 
-**15min buffer edge case:** Since `SnapshotSaved` events are processed with the same 15min finality buffer as other events, if another validator saves a snapshot within the last 15min of an epoch, this validator won't see it yet and may call `saveSnapshot()` redundantly. This is acceptable, since L2 gas is cheap.
+**20min buffer edge case:** Since `SnapshotSaved` events are processed with the same 20min finality buffer as other events, if another validator saves a snapshot within the last 20min of an epoch, this validator won't see it yet and may call `saveSnapshot()` redundantly. This is acceptable, since L2 gas is cheap.
 
 **Why claims are optional:** To challenge fraud, the validator needs ETH/WETH for deposits. Making claims locks funds on the outbox. During an attack, a conservative validator should preserve capital for challenges rather than tie it up in claims.
 
 ### EventIndexer
-Scans inbox/outbox logs in chunks. Only processes events from blocks older than 15min (finality buffer).
+Scans inbox/outbox logs in chunks. Only processes events from blocks older than 20min (finality buffer).
 
 Reacts to events:
 - `outbox.Claimed` → schedules `task::validate_claim`
@@ -81,13 +81,14 @@ On startup, indexer initializes from `now - sync_lookback_secs`. The lookback is
 - **30s HTTP timeout** on all RPC providers (10s connect timeout) — prevents infinite hangs on unresponsive endpoints
 - **Binary search (`find_block_by_timestamp`)**: retries each individual RPC call 3x with exponential backoff (5s, 15s, 45s) before panicking. Binary search state (lo/hi) preserved between retries.
 - **Indexer `scan_chain`**: returns false on RPC failure, retries next cycle (1s later). Does not crash the route.
-- **Epoch watcher**: logs warning and continues loop on RPC failure. Does not crash the route.
+- **Epoch watcher**: logs warning and continues loop on RPC failure. Claim RPC timeouts/connection errors are also handled gracefully (warn + retry next cycle). Non-RPC claim errors still panic.
+- **Task dispatcher**: logs warning and returns early on RPC failure (retries next cycle, 15s later). Does not crash the route.
 - **Fallback layer**: with multiple RPCs configured, failures rotate to the next RPC automatically
 
 ### General Errors
 - **RPC failures during indexing**: logged, retry next poll
 - **Task failures**: task stays in queue, retried next poll
-- **`Insufficient funds` on Challenge**: rescheduled +15min
+- **`Insufficient funds` on Challenge**: rescheduled +30min
 - **`Invalid claim` reverts**: rescheduled +30min (see below)
 
 ### Proactive Task Invalidation
@@ -105,7 +106,7 @@ This prevents wasted execution attempts and keeps the task queue clean.
 
 ### Invalid Claim Rescheduling
 
-Due to the 15min finality buffer, someone can change claim state right before we execute a task. When `challenge`, `start_verification`, or `verify_snapshot` reverts with "Invalid claim" (claimHash mismatch), we reschedule +30min to give the indexer time to catch up and update ClaimStore with fresh claim data.
+Due to the 20min finality buffer, someone can change claim state right before we execute a task. When `challenge`, `start_verification`, or `verify_snapshot` reverts with "Invalid claim" (claimHash mismatch), we reschedule +30min to give the indexer time to catch up and update ClaimStore with fresh claim data.
 
 ### Race Conditions
 
@@ -119,7 +120,7 @@ Each task has its own way of detecting and handling race conditions (another val
 | `claim` | state root in pending claim | drop task |
 | `claim` | on revert: `claimHashes[epoch] != 0` | drop task |
 | `challenge` | on revert: `Challenged` event emitted | drop task |
-| `challenge` | on revert: `VerificationStarted` event emitted | reschedule +15min |
+| `challenge` | on revert: `VerificationStarted` event emitted | reschedule +20min |
 | `send_snapshot` | (none - cheap, idempotent) | always try |
 | `start_verification` | `challenger != 0` | drop task |
 | `start_verification` | on revert: `VerificationStarted` event emitted | drop task |
@@ -133,7 +134,7 @@ Each task has its own way of detecting and handling race conditions (another val
 | `withdraw_deposit` | `claimHashes[epoch] == 0` (pre-check) | drop task |
 | `withdraw_deposit` | on revert: `claimHashes[epoch] == 0` | drop task |
 
-**Frontrun detection via event checks:** When a task reverts, we check if the expected event was emitted in recent blocks (last 500 blocks, capped at 1000 block range for RPC compatibility). This detects frontruns where another validator's tx landed between our pre-check and tx execution. If the event exists, the job was done - we drop the task. For `challenge`, if `VerificationStarted` was emitted (rare edge case during resync), we reschedule +15min to wait for finality before retrying with updated claim data.
+**Frontrun detection via event checks:** When a task reverts, we check if the expected event was emitted in recent blocks (last 500 blocks, capped at 1000 block range for RPC compatibility). This detects frontruns where another validator's tx landed between our pre-check and tx execution. If the event exists, the job was done - we drop the task. For `challenge`, if `VerificationStarted` was emitted (rare edge case during resync), we reschedule +20min to wait for finality before retrying with updated claim data.
 
 ### Missing Claim Data
 
@@ -191,7 +192,7 @@ This approach handles arbitrary batch posting delays without hitting RPC block r
 - For tests (local Anvil chains), `SEQUENCER_INBOX` is not set. When `sequencer_inbox` is `None`, finality checks return `Ok(true)` immediately, bypassing the check.
 
 **Why finality matters:**
-- The 15-minute buffer after epoch end is a heuristic, not a guarantee
+- The 20-minute buffer after epoch end is a heuristic, not a guarantee
 - Real finality depends on batch posting to L1 and L1 block finalization (~15-20 min on mainnet)
 - Without finality checks, a validator could challenge a valid claim if L2 data reorged after they read it
 
